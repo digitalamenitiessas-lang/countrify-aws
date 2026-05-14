@@ -1,0 +1,41 @@
+{
+  "name": "Countrify",
+  "short_name": "Countrify",
+  "description": "Beneficios exclusivos para residentes de countries y barrios cerrados.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "lang": "es-AR",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "browser"],
+  "background_color": "#eaeaea",
+  "theme_color": "#112250",
+  "orientation": "portrait-primary",
+  "categories": ["lifestyle", "business", "shopping", "productivity"],
+  "icons": [
+    {
+      "src": "/icon.svg?v=20260514",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.svg?v=20260514",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Promociones",
+      "short_name": "Promos",
+      "url": "/promotions"
+    },
+    {
+      "name": "Ingresar",
+      "short_name": "Login",
+      "url": "/login"
+    }
+  ]
+}

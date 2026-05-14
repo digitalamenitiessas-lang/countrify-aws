@@ -1,0 +1,16 @@
+.git
+.gitignore
+.next
+node_modules
+.env
+.env.*
+README.md
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+tsconfig.tsbuildinfo
+supabase/*
+!supabase/migrations/
+!supabase/migrations/**
+.claude

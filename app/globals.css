@@ -1,0 +1,444 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* COUNTRIFY — Brand palette: white / black / vibrant orange */
+  --background: #FFFFFF;
+  --foreground: #1A1A1A;
+  --card: #FFFFFF;
+  --card-foreground: #1A1A1A;
+  --popover: #FFFFFF;
+  --popover-foreground: #1A1A1A;
+  --primary: #112250;
+  --primary-foreground: #FFFFFF;
+  --secondary: #eaeaea;
+  --secondary-foreground: #1A1A1A;
+  --muted: #F5F5F5;
+  --muted-foreground: #666666;
+  --accent: #3b507d;
+  --accent-foreground: #1A1A1A;
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: #ffffff;
+  --border: #E5E5E5;
+  --input: #F5F5F5;
+  --ring: #112250;
+  --chart-1: #112250;
+  --chart-2: #3b507d;
+  --chart-3: #0a1838;
+  --chart-4: #f4dcb3;
+  --chart-5: #1A1A1A;
+  --radius: 0.75rem;
+  --sidebar: #FFFFFF;
+  --sidebar-foreground: #1A1A1A;
+  --sidebar-primary: #112250;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eaeaea;
+  --sidebar-accent-foreground: #1A1A1A;
+  --sidebar-border: #E5E5E5;
+  --sidebar-ring: #112250;
+
+  /* Custom COUNTRIFY tokens — remapped to white/orange brand
+     (legacy names like "cream"/"brown" preserved for compatibility) */
+  --countrify-cream-1: #FFFFFF;
+  --countrify-cream-2: #FAFAFA;
+  --countrify-cream-3: #F5F5F5;
+  --countrify-tan-1: #E5E5E5;
+  --countrify-tan-2: #CCCCCC;
+  --countrify-brown-light: #666666;
+  --countrify-brown: #1A1A1A;
+  --countrify-navy: #112250;
+  --countrify-navy-dark: #0a1838;
+  --countrify-surface: rgba(17, 34, 80, 0.05);
+  --countrify-glass: rgba(17, 34, 80, 0.03);
+  --countrify-highlight: rgba(17, 34, 80, 0.1);
+}
+
+.dark {
+  --background: #0E0E0E;
+  --foreground: #FAFAFA;
+  --card: #1A1A1A;
+  --card-foreground: #FAFAFA;
+  --popover: #1A1A1A;
+  --popover-foreground: #FAFAFA;
+  --primary: #112250;
+  --primary-foreground: #FFFFFF;
+  --secondary: #2A1810;
+  --secondary-foreground: #FAFAFA;
+  --muted: #1F1F1F;
+  --muted-foreground: #A3A3A3;
+  --accent: #3b507d;
+  --accent-foreground: #1A1A1A;
+  --destructive: oklch(0.65 0.22 25);
+  --destructive-foreground: #ffffff;
+  --border: #2A2A2A;
+  --input: #1F1F1F;
+  --ring: #112250;
+  --chart-1: #112250;
+  --chart-2: #3b507d;
+  --chart-3: #f4dcb3;
+  --chart-4: #0a1838;
+  --chart-5: #FAFAFA;
+  --sidebar: #0E0E0E;
+  --sidebar-foreground: #FAFAFA;
+  --sidebar-primary: #112250;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #1F1F1F;
+  --sidebar-accent-foreground: #FAFAFA;
+  --sidebar-border: #2A2A2A;
+  --sidebar-ring: #112250;
+
+  /* Custom COUNTRIFY tokens — dark variants */
+  --countrify-cream-1: #1A1A1A;
+  --countrify-cream-2: #222222;
+  --countrify-cream-3: #2A2A2A;
+  --countrify-tan-1: #333333;
+  --countrify-tan-2: #555555;
+  --countrify-brown-light: #A3A3A3;
+  --countrify-brown: #FAFAFA;
+  --countrify-navy: #112250;
+  --countrify-navy-dark: #0a1838;
+  --countrify-surface: rgba(17, 34, 80, 0.08);
+  --countrify-glass: rgba(17, 34, 80, 0.06);
+  --countrify-highlight: rgba(17, 34, 80, 0.14);
+}
+
+@theme inline {
+  --font-sans: var(--font-montserrat);
+  --font-display: var(--font-montserrat-alternates);
+  --font-serif: var(--font-montserrat);
+  --font-mono: 'Geist Mono', 'Geist Mono Fallback';
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-montserrat), sans-serif;
+  }
+
+  h1, h2, h3 {
+    font-family: var(--font-montserrat-alternates), var(--font-montserrat), sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+  }
+}
+
+/* Glassmorphism — warm toned */
+.glass-card {
+  background: var(--countrify-surface);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(17, 34, 80, 0.14);
+  background-color: var(--countrify-cream-1);
+}
+
+.glass-card-hover {
+  transition: all 0.3s ease;
+}
+
+.glass-card-hover:hover {
+  background-color: var(--countrify-cream-2);
+  border-color: rgba(17, 34, 80, 0.2);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+}
+
+/* Warm subtle grid background */
+.bg-grid {
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+}
+
+/* Premium button — Terracotta */
+.btn-premium {
+  background: linear-gradient(135deg, #3b507d, #112250);
+  color: #ffffff;
+  border: 1px solid rgba(10, 24, 56, 0.3);
+  transition: all 0.3s ease;
+}
+
+.btn-premium:hover {
+  background: linear-gradient(135deg, #1f3470, #112250);
+  box-shadow: 0 4px 20px rgba(17, 34, 80, 0.35);
+}
+
+/* ============================================================
+   IADMIN MESA — Premium visual layer
+   Inspirado en Linear / Mercury / Ramp, sobre paleta COUNTRIFY.
+   ============================================================ */
+
+/* Card con borde degradado y capa de sombra sutil; sensación "lifted" */
+.mesa-card {
+  position: relative;
+  background: linear-gradient(180deg, color-mix(in oklab, var(--card) 94%, transparent), color-mix(in oklab, var(--card) 86%, transparent));
+  backdrop-filter: blur(14px) saturate(1.08);
+  -webkit-backdrop-filter: blur(14px) saturate(1.08);
+  border: 1px solid color-mix(in oklab, var(--foreground) 6%, transparent);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.5) inset,
+    0 0 0 1px rgba(17, 34, 80, 0.04),
+    0 6px 24px -12px rgba(0, 0, 0, 0.1);
+}
+
+.mesa-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(59, 80, 125, 0.45), rgba(17, 34, 80, 0) 45%, rgba(17, 34, 80, 0) 55%, rgba(59, 80, 125, 0.35));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* KPI con hover lifted */
+.kpi-cell {
+  transition: background-color 220ms ease, transform 220ms ease;
+  position: relative;
+}
+.kpi-cell:hover {
+  background-color: rgba(17, 34, 80, 0.04);
+}
+.kpi-cell::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--primary), transparent);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.kpi-cell:hover::after {
+  opacity: 0.5;
+}
+
+/* Disco con degradado para los iconos de KPI — reemplaza bg-muted flat */
+.kpi-icon-disc {
+  background:
+    radial-gradient(120% 120% at 30% 20%, rgba(59, 80, 125, 0.95), rgba(59, 80, 125, 0.55) 45%, rgba(17, 34, 80, 0.25) 90%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.05),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+  color: #FFFFFF;
+}
+
+/* Punto "vivo" — pulsa para estados en curso */
+.live-dot {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: currentColor;
+}
+.live-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 9999px;
+  background: currentColor;
+  opacity: 0.3;
+  animation: live-ping 1.8s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+@keyframes live-ping {
+  0%, 100% { transform: scale(1); opacity: 0.35; }
+  50% { transform: scale(2); opacity: 0; }
+}
+
+/* Shadow de la columna sticky cuando hay scroll horizontal */
+.sticky-shadow-right::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -12px;
+  bottom: 0;
+  width: 12px;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.07), transparent);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.is-scrolled .sticky-shadow-right::after {
+  opacity: 1;
+}
+
+/* Segmented control premium (tipo Linear) */
+.seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9999px;
+  background: rgba(17, 34, 80, 0.06);
+  border: 1px solid rgba(17, 34, 80, 0.14);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+.seg button {
+  position: relative;
+  padding: 4px 10px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--countrify-brown-light);
+  transition: color 160ms ease;
+}
+.seg button:hover {
+  color: var(--foreground);
+}
+.seg button[aria-pressed='true'] {
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.08),
+    0 0 0 1px rgba(17, 34, 80, 0.18);
+}
+
+/* Header celda "mes actual" con gradient terracota suave */
+.th-current-month {
+  background: linear-gradient(180deg, rgba(17, 34, 80, 0.16), rgba(17, 34, 80, 0.06));
+  color: var(--primary);
+}
+
+/* Hover rows en la planilla — terracota muy sutil */
+.planilla-row:hover {
+  background-color: rgba(17, 34, 80, 0.04);
+}
+
+/* Divider horizontal degradado — reemplaza border-b duro */
+.divider-soft {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.1), transparent);
+}
+
+/* Delta pill (variación vs mes anterior) */
+.delta-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+}
+.delta-pill[data-tone='up'] {
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+}
+.delta-pill[data-tone='down'] {
+  background: rgba(16, 185, 129, 0.12);
+  color: #065f46;
+}
+.delta-pill[data-tone='flat'] {
+  background: rgba(102, 102, 102, 0.1);
+  color: var(--countrify-brown-light);
+}
+
+/* Valor numérico grande: letter-spacing y peso consistente */
+.stat-value {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  font-feature-settings: 'tnum', 'ss01';
+}
+
+/* Fade-in entry (para secciones colapsables al abrir) */
+@keyframes mesa-fade-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.mesa-fade-in {
+  animation: mesa-fade-in 260ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Pulse verde cuando una celda termina de guardarse */
+@keyframes cell-saved-pulse {
+  0%   { background-color: rgba(16, 185, 129, 0.22); box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.35); }
+  100% { background-color: transparent;              box-shadow: inset 0 0 0 0 rgba(16, 185, 129, 0);    }
+}
+.cell-saved {
+  animation: cell-saved-pulse 900ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+/* Zebra rows sutil en la planilla */
+.planilla-row:nth-child(even):not(:hover) {
+  background-color: rgba(0, 0, 0, 0.015);
+}
+
+/* Pointer feedback para links de ayuda */
+.kbd-hint {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in oklab, var(--foreground) 12%, transparent);
+  background: color-mix(in oklab, var(--muted) 70%, transparent);
+  color: var(--countrify-brown-light);
+  font-size: 10px;
+  font-weight: 500;
+  font-family: var(--font-mono), monospace;
+}
+
+/* Hide document scrollbar on desktop to keep the landing cleaner */
+html,
+body {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

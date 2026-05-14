@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git merge *)",
+      "Bash(command -v magick convert gs)",
+      "Bash(pdftotext -layout \"/c/Users/Matías Lujan/Downloads/CITIFY 1.pdf\" /tmp/citify-brand.txt)",
+      "Read(//tmp/**)",
+      "Bash(python -c \"import pypdfium2; print\\(pypdfium2.__version__\\)\")",
+      "Bash(python -c \"import fitz; print\\(fitz.__version__\\)\")",
+      "Bash(python -c \"import pdf2image; print\\('ok'\\)\")",
+      "Bash(pip install *)",
+      "Bash(python -c \"from PIL import Image; im = Image.open\\('public/citify-logo.png'\\); print\\(im.size, im.mode\\)\")",
+      "Read(//c/c/Users/Matías Lujan/citify/**)",
+      "Read(//c/c/Users/Matías Lujan/citify/lib/**)",
+      "Bash(git fetch *)",
+      "Bash(git rev-list *)",
+      "Bash(ffmpeg -version)",
+      "Bash(ffprobe -v error -show_entries stream=width,height,r_frame_rate,duration -of default=noprint_wrappers=1 \"C:/Users/Matías Lujan/citify/public/edificios.mp4\")",
+      "PowerShell(Get-Command ffmpeg -ErrorAction SilentlyContinue)",
+      "Bash(pnpm add *)",
+      "Bash(pnpm approve-builds *)",
+      "Bash(node install.js)",
+      "Bash(node scripts/encode-video.mjs)",
+      "Bash(node install/check.js)",
+      "Bash(node scripts/build-favicons.mjs)",
+      "Bash(node scripts/encode-video-mobile.mjs)"
+    ]
+  }
+}
