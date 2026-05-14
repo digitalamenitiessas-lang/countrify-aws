@@ -17,6 +17,10 @@ secrets-local.*
 citify-rds-credentials.*
 citify-taskdef-*.json
 citify-run-*.json
+countrify-rds-app-password.*
+countrify-rds-*.sql
+countrify-secrets-arns.json
+countrify-aws-progress.md
 
 # Common ignores
 node_modules
