@@ -1,0 +1,29 @@
+{
+  "Comment": "Apex and www ALIAS to citify-prod-alb (shared ALB serving Countrify via host header)",
+  "Changes": [
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "countrify.com.ar.",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z35SXDOTRQ7X7K",
+          "DNSName": "citify-prod-alb-522648696.us-east-1.elb.amazonaws.com.",
+          "EvaluateTargetHealth": false
+        }
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "www.countrify.com.ar.",
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": "Z35SXDOTRQ7X7K",
+          "DNSName": "citify-prod-alb-522648696.us-east-1.elb.amazonaws.com.",
+          "EvaluateTargetHealth": false
+        }
+      }
+    }
+  ]
+}

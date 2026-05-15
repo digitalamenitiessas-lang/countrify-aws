@@ -104,8 +104,8 @@ async function main() {
 
   try {
     await client.query('begin')
-    await client.query('delete from public.saved_promotions')
-    await client.query('delete from public.promotion_redemptions')
+    await client.query('delete from countrify.saved_promotions')
+    await client.query('delete from countrify.promotion_redemptions')
     await client.query('delete from public.promotions')
 
     for (const row of promotions || []) {
@@ -158,7 +158,7 @@ async function main() {
     for (const row of redemptions || []) {
       await client.query(
         `
-          insert into public.promotion_redemptions (
+          insert into countrify.promotion_redemptions (
             id,
             profile_id,
             promotion_id,
@@ -186,7 +186,7 @@ async function main() {
     for (const row of savedPromotions || []) {
       await client.query(
         `
-          insert into public.saved_promotions (
+          insert into countrify.saved_promotions (
             profile_id,
             promotion_id,
             created_at

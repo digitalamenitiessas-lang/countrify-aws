@@ -18,6 +18,16 @@ citify-rds-credentials.*
 citify-taskdef-*.json
 citify-run-*.json
 countrify-rds-app-password.*
+countrify-app-session-secret.*
+countrify-vapid-keys.*
+
+# Docker build/push logs
+docker-build*.log
+docker-push*.log
+
+# SSM one-off command params (often have embedded admin passwords after PowerShell expansion)
+scripts/aws/*-params.json
+scripts/aws/.cert-arn
 countrify-rds-*.sql
 countrify-secrets-arns.json
 countrify-aws-progress.md

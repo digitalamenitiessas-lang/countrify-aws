@@ -1,0 +1,46 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "S3CountrifyAssets",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::countrify-prod-assets/*"
+    },
+    {
+      "Sid": "S3CountrifyAssetsList",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
+      "Resource": "arn:aws:s3:::countrify-prod-assets"
+    },
+    {
+      "Sid": "CognitoCountrifyPool",
+      "Effect": "Allow",
+      "Action": [
+        "cognito-idp:DescribeUserPool",
+        "cognito-idp:InitiateAuth",
+        "cognito-idp:SignUp",
+        "cognito-idp:ConfirmSignUp",
+        "cognito-idp:ResendConfirmationCode",
+        "cognito-idp:ForgotPassword",
+        "cognito-idp:ConfirmForgotPassword",
+        "cognito-idp:AdminGetUser",
+        "cognito-idp:AdminCreateUser",
+        "cognito-idp:AdminUpdateUserAttributes",
+        "cognito-idp:AdminSetUserPassword",
+        "cognito-idp:AdminDeleteUser",
+        "cognito-idp:AdminAddUserToGroup",
+        "cognito-idp:AdminRemoveUserFromGroup",
+        "cognito-idp:AdminListGroupsForUser",
+        "cognito-idp:ListUsers"
+      ],
+      "Resource": "arn:aws:cognito-idp:us-east-1:351885857894:userpool/us-east-1_qJ3dgY94K"
+    },
+    {
+      "Sid": "SecretsManagerCountrify",
+      "Effect": "Allow",
+      "Action": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+      "Resource": "arn:aws:secretsmanager:us-east-1:351885857894:secret:countrify/*"
+    }
+  ]
+}

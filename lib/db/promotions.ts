@@ -38,7 +38,7 @@ function basePromotionSelect() {
       count(pr.id)::int as usage_count
     from public.promotions p
     left join public.businesses b on b.id = p.business_id
-    left join public.promotion_redemptions pr on pr.promotion_id = p.id
+    left join countrify.promotion_redemptions pr on pr.promotion_id = p.id
   `
 }
 

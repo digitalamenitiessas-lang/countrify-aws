@@ -1,0 +1,27 @@
+{
+  "Comment": "ACM validation CNAMEs for countrify.com.ar + www",
+  "Changes": [
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "_e30ec75905a8123b661e97cbd2142b6e.countrify.com.ar.",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [
+          { "Value": "_ce90d1f3ef1d7072d6d73be92691f217.jkddzztszm.acm-validations.aws." }
+        ]
+      }
+    },
+    {
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "_d3c2c86d4dae66b0acbf69eabdc6c752.www.countrify.com.ar.",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [
+          { "Value": "_a4e209b032ad0f93d09464d90aa95981.jkddzztszm.acm-validations.aws." }
+        ]
+      }
+    }
+  ]
+}

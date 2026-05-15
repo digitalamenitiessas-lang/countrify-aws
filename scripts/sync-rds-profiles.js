@@ -82,7 +82,7 @@ async function main() {
     for (const row of buildings || []) {
       await client.query(
         `
-          insert into public.buildings (
+          insert into countrify.buildings (
             id,
             name,
             address,
@@ -128,7 +128,7 @@ async function main() {
     for (const row of profiles || []) {
       await client.query(
         `
-          insert into public.profiles (
+          insert into countrify.profiles (
             id,
             email,
             full_name,
@@ -210,7 +210,7 @@ async function main() {
       if (!row.business_id) continue
       await client.query(
         `
-          update public.profiles
+          update countrify.profiles
           set business_id = $2,
               updated_at = $3
           where id = $1

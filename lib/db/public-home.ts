@@ -39,7 +39,7 @@ export async function getPublicPromotionsFromPostgres(limit = 12): Promise<Publi
         count(pr.id)::int as usage_count
       from public.promotions p
       left join public.businesses b on b.id = p.business_id
-      left join public.promotion_redemptions pr on pr.promotion_id = p.id
+      left join countrify.promotion_redemptions pr on pr.promotion_id = p.id
       where p.is_active = true
         and p.expiration_date >= current_date
       group by

@@ -21,7 +21,7 @@ export async function findProfileByEmail(email: string) {
   const result = await pgQuery(
     `
       select *
-      from public.profiles
+      from countrify.profiles
       where lower(email) = lower($1)
       limit 1
     `,
@@ -39,7 +39,7 @@ export async function findProfileById(id: string) {
   const result = await pgQuery(
     `
       select *
-      from public.profiles
+      from countrify.profiles
       where id = $1
       limit 1
     `,

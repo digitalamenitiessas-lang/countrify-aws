@@ -34,7 +34,6 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/scripts ./scripts
-COPY --from=builder /app/supabase ./supabase
 
 EXPOSE 3000
 
