@@ -2,6 +2,9 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Button } from '@/components/ui/button'
+import { AffiliateSection } from '@/components/home/affiliate-section'
+import { BrandsCarousel } from '@/components/home/brands-carousel'
+import { SiteFooter } from '@/components/home/site-footer'
 import { getCurrentProfile } from '@/lib/auth'
 import { ROLE_HOME } from '@/lib/constants'
 import { isSupabaseConfigured } from '@/lib/supabase/env'
@@ -26,7 +29,7 @@ export default async function HomePage() {
         }}
       />
 
-      <div className="relative z-10 mx-auto flex min-h-[100dvh] max-w-4xl flex-col items-center justify-center px-6 py-16 text-center">
+      <section className="relative z-10 mx-auto flex max-w-4xl flex-col items-center px-6 pb-16 pt-20 text-center md:pt-28">
         <Image
           src="/countrify-logo.svg"
           alt="Countrify"
@@ -52,10 +55,19 @@ export default async function HomePage() {
           <Button asChild size="lg" variant="outline" className="border-[#112250] text-[#112250] hover:bg-[#f4dcb3]/40">
             <Link href="/promotions">Ver promociones</Link>
           </Button>
+          <Button asChild size="lg" variant="ghost" className="text-[#112250] hover:bg-[#112250]/5">
+            <Link href="#afiliarme">Quiero afiliarme</Link>
+          </Button>
         </div>
+      </section>
 
-        <p className="mt-16 text-xs text-[#3b507d]/70">Powered by Digital Amenities</p>
+      <BrandsCarousel />
+
+      <div id="afiliarme">
+        <AffiliateSection />
       </div>
+
+      <SiteFooter />
     </main>
   )
 }
