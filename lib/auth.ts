@@ -11,7 +11,7 @@ import type {
   UserRole,
 } from '@/lib/types'
 import { capabilitiesForRole, IADMIN_CAPABILITIES } from '@/lib/iadmin/capabilities'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { pgQuery } from '@/lib/db/postgres'
 
 function mapProfileRow(row: any): Profile {
   return {
@@ -55,25 +55,7 @@ export async function getCurrentProfile() {
     }
   }
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) {
-    return null
-  }
-
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
-    return null
-  }
-
-  const { data } = await supabase.from('profiles').select('*').eq('id', user.id).maybeSingle()
-  if (!data) {
-    return null
-  }
-
-  return mapProfileRow(data)
+  return null
 }
 
 export async function requireProfile(allowedRoles?: UserRole[]) {
@@ -95,21 +77,14 @@ export async function requireProfile(allowedRoles?: UserRole[]) {
 // ----------------------------------------------------------------------------
 
 export async function getIAdminContext(profile: Profile): Promise<IAdminContext> {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) {
-    return { isSuperAdmin: profile.role === 'super_admin', memberships: [], primary: null }
-  }
-
   const isSuperAdmin = profile.role === 'super_admin'
 
   if (isSuperAdmin) {
-    const { data: adminsData } = await supabase
-      .from('iadmin_administrations')
-      .select('*')
-      .eq('is_active', true)
-      .order('name')
+    const { rows: adminsData } = await pgQuery<any>(
+      `select * from countrify.iadmin_administrations where is_active = true order by name`,
+    )
 
-    const memberships: IAdminMembership[] = (adminsData ?? []).map((row: any, index: number) => ({
+    const memberships: IAdminMembership[] = adminsData.map((row: any, index: number) => ({
       administration: mapAdministration(row),
       operationalRole: 'titular' as IAdminOperationalRole,
       isPrimary: index === 0,
@@ -123,33 +98,37 @@ export async function getIAdminContext(profile: Profile): Promise<IAdminContext>
     }
   }
 
-  const { data: grantsData } = await supabase
-    .from('iadmin_role_grants')
-    .select(`
-      operational_role,
-      is_primary,
-      created_at,
-      iadmin_administrations!inner ( * )
-    `)
-    .eq('profile_id', profile.id)
-    .order('is_primary', { ascending: false })
-    .order('created_at', { ascending: true })
+  const { rows: grantsData } = await pgQuery<any>(
+    `
+      select
+        g.operational_role,
+        g.is_primary,
+        g.created_at,
+        row_to_json(a.*) as administration
+      from countrify.iadmin_role_grants g
+      join countrify.iadmin_administrations a on a.id = g.administration_id
+      where g.profile_id = $1
+      order by g.is_primary desc, g.created_at asc
+    `,
+    [profile.id],
+  )
 
-  const adminIds = (grantsData ?? [])
-    .map((row: any) => {
-      const admin = Array.isArray(row.iadmin_administrations) ? row.iadmin_administrations[0] : row.iadmin_administrations
-      return admin?.id as string | undefined
-    })
-    .filter((id): id is string => Boolean(id))
+  const adminIds: string[] = grantsData
+    .map((row: any) => row.administration?.id as string | undefined)
+    .filter((id: string | undefined): id is string => Boolean(id))
 
   const overridesByAdmin = new Map<string, Map<string, boolean>>()
   if (adminIds.length > 0) {
-    const { data: overrideRows } = await supabase
-      .from('iadmin_role_capabilities')
-      .select('administration_id, operational_role, capability_code, granted')
-      .in('administration_id', adminIds)
+    const { rows: overrideRows } = await pgQuery<any>(
+      `
+        select administration_id, operational_role, capability_code, granted
+        from countrify.iadmin_role_capabilities
+        where administration_id = any($1::uuid[])
+      `,
+      [adminIds],
+    )
 
-    for (const row of overrideRows ?? []) {
+    for (const row of overrideRows) {
       const key = `${row.administration_id}::${row.operational_role}`
       const map = overridesByAdmin.get(key) ?? new Map<string, boolean>()
       map.set(row.capability_code, Boolean(row.granted))
@@ -157,9 +136,9 @@ export async function getIAdminContext(profile: Profile): Promise<IAdminContext>
     }
   }
 
-  const memberships: IAdminMembership[] = (grantsData ?? [])
+  const memberships: IAdminMembership[] = grantsData
     .map((row: any): IAdminMembership | null => {
-      const admin = Array.isArray(row.iadmin_administrations) ? row.iadmin_administrations[0] : row.iadmin_administrations
+      const admin = row.administration
       if (!admin) return null
       const operationalRole = row.operational_role as string
       const preset = capabilitiesForRole(operationalRole)
@@ -179,7 +158,7 @@ export async function getIAdminContext(profile: Profile): Promise<IAdminContext>
         capabilities,
       }
     })
-    .filter((item): item is IAdminMembership => item !== null)
+    .filter((item: IAdminMembership | null): item is IAdminMembership => item !== null)
 
   return {
     isSuperAdmin: false,
