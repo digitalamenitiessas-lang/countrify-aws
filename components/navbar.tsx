@@ -204,7 +204,7 @@ export function Navbar() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void handleLogout()} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction onClick={() => void handleLogout()} className="bg-[#112250] text-white hover:bg-[#3b507d]">
               Si, salir
             </AlertDialogAction>
           </AlertDialogFooter>
