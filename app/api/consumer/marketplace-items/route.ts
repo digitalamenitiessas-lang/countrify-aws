@@ -1,16 +1,11 @@
 import { NextResponse } from 'next/server'
 import { getCurrentProfile } from '@/lib/auth'
-import { getSupabaseAdminClient } from '@/lib/supabase/admin'
+import { insertMarketplaceItemInPostgres } from '@/lib/db/business'
 
 export async function POST(request: Request) {
   const profile = await getCurrentProfile()
   if (!profile) {
     return NextResponse.json({ error: 'No autenticado.' }, { status: 401 })
-  }
-
-  const admin = getSupabaseAdminClient()
-  if (!admin) {
-    return NextResponse.json({ error: 'Supabase admin no esta configurado.' }, { status: 500 })
   }
 
   const body = await request.json().catch(() => null)
@@ -29,21 +24,22 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Tu perfil no tiene edificio asociado.' }, { status: 400 })
   }
 
-  const { error } = await admin.from('marketplace_items').insert({
-    id: itemId,
-    seller_profile_id: profile.id,
-    building_id: profile.buildingId,
-    title,
-    price,
-    description,
-    condition,
-    image_path: imagePath,
-    is_active: true,
-  })
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  try {
+    await insertMarketplaceItemInPostgres({
+      id: itemId,
+      sellerProfileId: profile.id,
+      buildingId: profile.buildingId,
+      title,
+      price,
+      description,
+      condition,
+      imagePath,
+    })
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Error' },
+      { status: 500 },
+    )
   }
-
-  return NextResponse.json({ ok: true })
 }
