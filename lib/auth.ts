@@ -1,4 +1,9 @@
 import { redirect } from 'next/navigation'
+import {
+  getIAdminAdministrationsFromPostgres,
+  getIAdminRoleCapabilityOverridesFromPostgres,
+  getIAdminRoleGrantsForProfileFromPostgres,
+} from '@/lib/db/iadmin-core'
 import { findProfileByEmail, findProfileById } from '@/lib/db/profiles'
 import { getAppSession } from '@/lib/auth/session'
 import type {
@@ -11,23 +16,6 @@ import type {
   UserRole,
 } from '@/lib/types'
 import { capabilitiesForRole, IADMIN_CAPABILITIES } from '@/lib/iadmin/capabilities'
-import { pgQuery } from '@/lib/db/postgres'
-
-function mapProfileRow(row: any): Profile {
-  return {
-    id: row.id,
-    email: row.email ?? '',
-    fullName: row.full_name ?? 'Usuario',
-    role: row.role,
-    avatarText: row.avatar_text ?? (row.full_name?.slice(0, 2)?.toUpperCase() || 'U'),
-    businessId: row.business_id ?? null,
-    buildingId: row.building_id ?? null,
-    floor: row.floor ?? null,
-    unit: row.unit ?? null,
-    phone: row.phone ?? null,
-    createdAt: row.created_at,
-  }
-}
 
 function mapAdministration(row: any): IAdminAdministration {
   return {
@@ -43,19 +31,15 @@ function mapAdministration(row: any): IAdminAdministration {
   }
 }
 
-export async function getCurrentProfile() {
+export async function getCurrentProfile(): Promise<Profile | null> {
   const appSession = await getAppSession()
-  if (appSession?.provider === 'cognito') {
-    const profile = appSession.profileId
-      ? await findProfileById(appSession.profileId)
-      : await findProfileByEmail(appSession.email)
+  if (appSession?.provider !== 'cognito') return null
 
-    if (profile) {
-      return profile
-    }
-  }
+  const profile = appSession.profileId
+    ? await findProfileById(appSession.profileId)
+    : await findProfileByEmail(appSession.email)
 
-  return null
+  return profile ?? null
 }
 
 export async function requireProfile(allowedRoles?: UserRole[]) {
@@ -80,11 +64,8 @@ export async function getIAdminContext(profile: Profile): Promise<IAdminContext>
   const isSuperAdmin = profile.role === 'super_admin'
 
   if (isSuperAdmin) {
-    const { rows: adminsData } = await pgQuery<any>(
-      `select * from countrify.iadmin_administrations where is_active = true order by name`,
-    )
-
-    const memberships: IAdminMembership[] = adminsData.map((row: any, index: number) => ({
+    const adminsData = await getIAdminAdministrationsFromPostgres(true)
+    const memberships: IAdminMembership[] = adminsData.map((row, index) => ({
       administration: mapAdministration(row),
       operationalRole: 'titular' as IAdminOperationalRole,
       isPrimary: index === 0,
@@ -98,67 +79,47 @@ export async function getIAdminContext(profile: Profile): Promise<IAdminContext>
     }
   }
 
-  const { rows: grantsData } = await pgQuery<any>(
-    `
-      select
-        g.operational_role,
-        g.is_primary,
-        g.created_at,
-        row_to_json(a.*) as administration
-      from countrify.iadmin_role_grants g
-      join countrify.iadmin_administrations a on a.id = g.administration_id
-      where g.profile_id = $1
-      order by g.is_primary desc, g.created_at asc
-    `,
-    [profile.id],
-  )
-
-  const adminIds: string[] = grantsData
-    .map((row: any) => row.administration?.id as string | undefined)
-    .filter((id: string | undefined): id is string => Boolean(id))
+  const grantsData = await getIAdminRoleGrantsForProfileFromPostgres(profile.id)
+  const adminIds = grantsData.map((row) => row.administration_id)
+  const overrideRows = adminIds.length > 0
+    ? await getIAdminRoleCapabilityOverridesFromPostgres(adminIds)
+    : []
 
   const overridesByAdmin = new Map<string, Map<string, boolean>>()
-  if (adminIds.length > 0) {
-    const { rows: overrideRows } = await pgQuery<any>(
-      `
-        select administration_id, operational_role, capability_code, granted
-        from countrify.iadmin_role_capabilities
-        where administration_id = any($1::uuid[])
-      `,
-      [adminIds],
-    )
-
-    for (const row of overrideRows) {
-      const key = `${row.administration_id}::${row.operational_role}`
-      const map = overridesByAdmin.get(key) ?? new Map<string, boolean>()
-      map.set(row.capability_code, Boolean(row.granted))
-      overridesByAdmin.set(key, map)
-    }
+  for (const row of overrideRows) {
+    const key = `${row.administration_id}::${row.operational_role}`
+    const map = overridesByAdmin.get(key) ?? new Map<string, boolean>()
+    map.set(row.capability_code, Boolean(row.granted))
+    overridesByAdmin.set(key, map)
   }
 
-  const memberships: IAdminMembership[] = grantsData
-    .map((row: any): IAdminMembership | null => {
-      const admin = row.administration
-      if (!admin) return null
-      const operationalRole = row.operational_role as string
-      const preset = capabilitiesForRole(operationalRole)
-      const overrides = overridesByAdmin.get(`${admin.id}::${operationalRole}`) ?? new Map<string, boolean>()
-
-      const capabilities = IADMIN_CAPABILITIES.filter((cap) => {
-        if (overrides.has(cap)) {
-          return overrides.get(cap) === true
-        }
-        return preset.includes(cap)
-      })
-
-      return {
-        administration: mapAdministration(admin),
-        operationalRole,
-        isPrimary: Boolean(row.is_primary),
-        capabilities,
+  const memberships: IAdminMembership[] = grantsData.map((row) => {
+    const preset = capabilitiesForRole(row.operational_role)
+    const overrides = overridesByAdmin.get(`${row.administration_id}::${row.operational_role}`) ?? new Map<string, boolean>()
+    const capabilities = IADMIN_CAPABILITIES.filter((cap) => {
+      if (overrides.has(cap)) {
+        return overrides.get(cap) === true
       }
+      return preset.includes(cap)
     })
-    .filter((item: IAdminMembership | null): item is IAdminMembership => item !== null)
+
+    return {
+      administration: mapAdministration({
+        id: row.admin_id,
+        name: row.admin_name,
+        legal_name: row.admin_legal_name,
+        tax_id: row.admin_tax_id,
+        contact_email: row.admin_contact_email,
+        contact_phone: row.admin_contact_phone,
+        is_active: row.admin_is_active,
+        legal_info: row.admin_legal_info,
+        created_at: row.admin_created_at,
+      }),
+      operationalRole: row.operational_role,
+      isPrimary: Boolean(row.is_primary),
+      capabilities,
+    }
+  })
 
   return {
     isSuperAdmin: false,
