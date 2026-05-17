@@ -35,6 +35,45 @@ export async function findProfileByEmail(email: string) {
   return mapProfileRow(result.rows[0])
 }
 
+export async function upsertProfile(input: {
+  id: string
+  email: string
+  fullName: string
+  avatarText: string
+  role: UserRole
+  phone: string | null
+  buildingId: string | null
+  businessId: string | null
+}): Promise<Profile> {
+  const result = await pgQuery(
+    `
+      insert into countrify.profiles (id, email, full_name, avatar_text, role, phone, building_id, business_id)
+      values ($1, lower($2), $3, $4, $5, $6, $7, $8)
+      on conflict (id) do update set
+        email = excluded.email,
+        full_name = excluded.full_name,
+        avatar_text = excluded.avatar_text,
+        role = excluded.role,
+        phone = excluded.phone,
+        building_id = excluded.building_id,
+        business_id = excluded.business_id
+      returning *
+    `,
+    [
+      input.id,
+      input.email,
+      input.fullName,
+      input.avatarText,
+      input.role,
+      input.phone,
+      input.buildingId,
+      input.businessId,
+    ],
+  )
+
+  return mapProfileRow(result.rows[0])
+}
+
 export async function findProfileById(id: string) {
   const result = await pgQuery(
     `

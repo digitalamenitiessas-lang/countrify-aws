@@ -1,4 +1,14 @@
-import { Pool, type PoolClient, type PoolConfig, type QueryResult, type QueryResultRow } from 'pg'
+import { Pool, types, type PoolClient, type PoolConfig, type QueryResult, type QueryResultRow } from 'pg'
+
+// Keep date/time columns as ISO strings instead of JS Date objects so they can
+// be passed straight into React/JSON without "Objects are not valid as a React
+// child" runtime errors. Matches the historical Supabase REST behavior.
+const TIMESTAMPTZ_OID = 1184
+const TIMESTAMP_OID = 1114
+const DATE_OID = 1082
+types.setTypeParser(TIMESTAMPTZ_OID, (val: any) => val)
+types.setTypeParser(TIMESTAMP_OID, (val: any) => val)
+types.setTypeParser(DATE_OID, (val: any) => val)
 
 declare global {
   // eslint-disable-next-line no-var
@@ -59,4 +69,30 @@ export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
   values?: unknown[],
 ): Promise<QueryResult<T>> {
   return getPostgresPool().query<T>(text, values)
+}
+
+// Ejecuta una serie de queries dentro de una transacción con
+// `app.current_profile_id` seteado, de modo que cualquier RPC que use
+// `auth.uid()` (que en RDS leemos desde esa variable de sesión) tenga acceso
+// al profile id del usuario autenticado por Cognito.
+export async function pgQueryAsProfile<T extends QueryResultRow = QueryResultRow>(
+  profileId: string,
+  text: string,
+  values?: unknown[],
+): Promise<QueryResult<T>> {
+  if (!/^[0-9a-fA-F-]{36}$/.test(profileId)) {
+    throw new Error('profileId con formato invalido')
+  }
+  return withPgClient(async (client) => {
+    await client.query('begin')
+    try {
+      await client.query(`set local app.current_profile_id = '${profileId}'`)
+      const result = await client.query<T>(text, values)
+      await client.query('commit')
+      return result
+    } catch (error) {
+      await client.query('rollback')
+      throw error
+    }
+  })
 }
