@@ -1,18 +1,8 @@
-import { SetupNotice } from '@/components/setup-notice'
 import { OwnerDashboard } from '@/components/dashboards/owner-dashboard'
 import { requireProfile } from '@/lib/auth'
 import { getOwnerDashboardData } from '@/lib/data'
-import { isSupabaseConfigured } from '@/lib/supabase/env'
 
 export default async function PropietarioPage() {
-  if (!isSupabaseConfigured()) {
-    return (
-      <div className="min-h-screen bg-background pt-16">
-        <SetupNotice />
-      </div>
-    )
-  }
-
   const { profile } = await requireProfile(['propietario', 'super_admin'])
   const data = await getOwnerDashboardData(profile.id)
 

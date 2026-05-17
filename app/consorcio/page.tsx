@@ -1,17 +1,7 @@
 import { redirect } from 'next/navigation'
-import { SetupNotice } from '@/components/setup-notice'
 import { getCurrentProfile } from '@/lib/auth'
-import { isSupabaseConfigured } from '@/lib/supabase/env'
 
 export default async function ConsorcioPage() {
-  if (!isSupabaseConfigured()) {
-    return (
-      <div className="min-h-screen bg-background pt-16">
-        <SetupNotice />
-      </div>
-    )
-  }
-
   const profile = await getCurrentProfile()
   if (!profile) {
     redirect('/login')
