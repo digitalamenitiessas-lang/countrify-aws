@@ -3,7 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import {
+  createIAdminProviderInPostgres,
+  getIAdminProviderByIdFromPostgres,
+  insertIAdminAuditLogInPostgres,
+  updateIAdminProviderInPostgres,
+} from '@/lib/db/iadmin-core'
 
 const providerFields = z.object({
   name: z.string().trim().min(1).max(120),
@@ -28,40 +33,30 @@ export async function createProvider(input: z.input<typeof createProviderSchema>
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
+  const { id } = await createIAdminProviderInPostgres({
+    administrationId: parsed.administrationId,
+    name: parsed.name,
+    taxId: parsed.taxId ?? null,
+    category: parsed.category ?? null,
+    email: parsed.email ?? null,
+    phone: parsed.phone ?? null,
+    notes: parsed.notes ?? null,
+    isRecurring: parsed.isRecurring ?? false,
+    recurringAmount: parsed.recurringAmount ?? null,
+    recurringKind: parsed.recurringKind ?? 'ordinaria',
+  })
 
-  const { data, error } = await supabase
-    .from('iadmin_providers')
-    .insert({
-      administration_id: parsed.administrationId,
-      name: parsed.name,
-      tax_id: parsed.taxId ?? null,
-      category: parsed.category ?? null,
-      email: parsed.email ?? null,
-      phone: parsed.phone ?? null,
-      notes: parsed.notes ?? null,
-      is_recurring: parsed.isRecurring ?? false,
-      recurring_amount: parsed.recurringAmount ?? null,
-      recurring_kind: parsed.recurringKind ?? 'ordinaria',
-      is_active: true,
-    })
-    .select('id')
-    .single()
-
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: parsed.administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_providers',
-    entity_id: data.id,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_providers',
+    entityId: id,
     action: 'provider.created',
     metadata: { name: parsed.name },
   })
 
   revalidatePath('/iadmin/proveedores')
-  return { id: data.id as string }
+  return { id }
 }
 
 const updateProviderSchema = providerFields.partial().extend({
@@ -70,14 +65,8 @@ const updateProviderSchema = providerFields.partial().extend({
 
 export async function updateProvider(input: z.input<typeof updateProviderSchema>) {
   const parsed = updateProviderSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: provider } = await supabase
-    .from('iadmin_providers')
-    .select('id, administration_id')
-    .eq('id', parsed.providerId)
-    .maybeSingle()
+  const provider = await getIAdminProviderByIdFromPostgres(parsed.providerId)
   if (!provider) throw new Error('Proveedor no encontrado')
 
   const { profile } = await requireIAdmin({
@@ -85,28 +74,30 @@ export async function updateProvider(input: z.input<typeof updateProviderSchema>
     administrationId: provider.administration_id,
   })
 
-  const patch: Record<string, unknown> = {}
-  if (parsed.name !== undefined) patch.name = parsed.name
-  if (parsed.taxId !== undefined) patch.tax_id = parsed.taxId
-  if (parsed.category !== undefined) patch.category = parsed.category
-  if (parsed.email !== undefined) patch.email = parsed.email
-  if (parsed.phone !== undefined) patch.phone = parsed.phone
-  if (parsed.notes !== undefined) patch.notes = parsed.notes
-  if (parsed.isRecurring !== undefined) patch.is_recurring = parsed.isRecurring
-  if (parsed.recurringAmount !== undefined) patch.recurring_amount = parsed.recurringAmount
-  if (parsed.recurringKind !== undefined) patch.recurring_kind = parsed.recurringKind
-  if (Object.keys(patch).length === 0) return
+  const patch = {
+    name: parsed.name,
+    taxId: parsed.taxId,
+    category: parsed.category,
+    email: parsed.email,
+    phone: parsed.phone,
+    notes: parsed.notes,
+    isRecurring: parsed.isRecurring,
+    recurringAmount: parsed.recurringAmount,
+    recurringKind: parsed.recurringKind,
+  }
 
-  const { error } = await supabase.from('iadmin_providers').update(patch).eq('id', parsed.providerId)
-  if (error) throw new Error(error.message)
+  const hasChanges = Object.values(patch).some((value) => value !== undefined)
+  if (!hasChanges) return
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: provider.administration_id,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_providers',
-    entity_id: parsed.providerId,
+  await updateIAdminProviderInPostgres(parsed.providerId, patch)
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: provider.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_providers',
+    entityId: parsed.providerId,
     action: 'provider.updated',
-    metadata: patch,
+    metadata: patch as Record<string, unknown>,
   })
 
   revalidatePath('/iadmin/proveedores')
@@ -119,14 +110,8 @@ const setProviderActiveSchema = z.object({
 
 export async function setProviderActive(input: z.input<typeof setProviderActiveSchema>) {
   const parsed = setProviderActiveSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: provider } = await supabase
-    .from('iadmin_providers')
-    .select('id, administration_id')
-    .eq('id', parsed.providerId)
-    .maybeSingle()
+  const provider = await getIAdminProviderByIdFromPostgres(parsed.providerId)
   if (!provider) throw new Error('Proveedor no encontrado')
 
   const { profile } = await requireIAdmin({
@@ -134,17 +119,13 @@ export async function setProviderActive(input: z.input<typeof setProviderActiveS
     administrationId: provider.administration_id,
   })
 
-  const { error } = await supabase
-    .from('iadmin_providers')
-    .update({ is_active: parsed.isActive })
-    .eq('id', parsed.providerId)
-  if (error) throw new Error(error.message)
+  await updateIAdminProviderInPostgres(parsed.providerId, { isActive: parsed.isActive })
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: provider.administration_id,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_providers',
-    entity_id: parsed.providerId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: provider.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_providers',
+    entityId: parsed.providerId,
     action: parsed.isActive ? 'provider.activated' : 'provider.deactivated',
   })
 

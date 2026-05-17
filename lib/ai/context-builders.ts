@@ -1,6 +1,4 @@
-import { getSupabaseServerClient } from '@/lib/supabase/server'
-
-// ─── shared helpers ──────────────────────────────────────────────────────────
+import { pgQuery } from '@/lib/db/postgres'
 
 function today() {
   return new Date().toISOString().slice(0, 10)
@@ -24,105 +22,128 @@ export interface VecinoContext {
 }
 
 export async function buildVecinoContext(userId: string): Promise<VecinoContext | null> {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) return null
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name, floor, unit, building_id')
-    .eq('id', userId)
-    .single()
-
+  const profileResult = await pgQuery<{
+    full_name: string | null
+    floor: string | null
+    unit: string | null
+    building_id: string | null
+  }>(
+    `select full_name, floor, unit, building_id from countrify.profiles where id = $1 limit 1`,
+    [userId],
+  )
+  const profile = profileResult.rows[0]
   if (!profile) return null
 
   const buildingId = profile.building_id
 
-  const [
-    { data: buildingData },
-    { data: promotionsData },
-    { data: savedRows },
-    { data: usedRows },
-    { data: marketplaceData },
-    { data: complaintRows },
-  ] = await Promise.all([
+  const [building, promotions, saved, used, marketplace, complaints] = await Promise.all([
     buildingId
-      ? supabase.from('buildings').select('name, address').eq('id', buildingId).maybeSingle()
-      : Promise.resolve({ data: null }),
-    supabase
-      .from('promotions')
-      .select('title, discount, expiration_date, is_active, businesses(name), building_id')
-      .eq('is_active', true)
-      .gte('expiration_date', today())
-      .order('created_at', { ascending: false })
-      .limit(20),
-    supabase.from('saved_promotions').select('promotion_id').eq('profile_id', userId),
-    supabase.from('promotion_redemptions').select('promotion_id').eq('profile_id', userId),
+      ? pgQuery<{ name: string; address: string | null }>(
+          `select name, address from countrify.buildings where id = $1 limit 1`,
+          [buildingId],
+        ).then((r) => r.rows[0] ?? null)
+      : Promise.resolve(null),
+    pgQuery<{
+      title: string
+      discount: string
+      expiration_date: string | null
+      is_active: boolean
+      business_name: string | null
+      building_id: string | null
+    }>(
+      `
+        select p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
+               b.name as business_name, p.building_id
+        from public.promotions p
+        left join public.businesses b on b.id = p.business_id
+        where p.is_active = true and p.expiration_date >= $1::date
+        order by p.created_at desc
+        limit 20
+      `,
+      [today()],
+    ).then((r) => r.rows),
+    pgQuery<{ promotion_id: string }>(
+      `select promotion_id from countrify.saved_promotions where profile_id = $1`,
+      [userId],
+    ).then((r) => r.rows.map((row: { promotion_id: string }) => row.promotion_id)),
+    pgQuery<{ promotion_id: string }>(
+      `select promotion_id from countrify.promotion_redemptions where profile_id = $1`,
+      [userId],
+    ).then((r) => r.rows.map((row: { promotion_id: string }) => row.promotion_id)),
     buildingId
-      ? supabase
-          .from('marketplace_items')
-          .select('title, price, condition, profiles(full_name)')
-          .eq('building_id', buildingId)
-          .eq('is_active', true)
-          .limit(15)
-      : Promise.resolve({ data: [] }),
+      ? pgQuery<{ title: string; price: string; condition: string; seller_name: string | null }>(
+          `
+            select m.title, m.price::text as price, m.condition, p.full_name as seller_name
+            from countrify.marketplace_items m
+            left join countrify.profiles p on p.id = m.seller_profile_id
+            where m.building_id = $1 and m.is_active = true
+            limit 15
+          `,
+          [buildingId],
+        ).then((r) => r.rows)
+      : Promise.resolve([]),
     buildingId
-      ? supabase
-          .from('complaint_cases')
-          .select('title, status, created_at')
-          .eq('author_profile_id', userId)
-          .order('created_at', { ascending: false })
-          .limit(10)
-      : Promise.resolve({ data: [] }),
+      ? pgQuery<{ title: string; status: string; created_at: string }>(
+          `
+            select title, status::text as status, created_at::text as created_at
+            from countrify.complaint_cases
+            where author_profile_id = $1
+            order by created_at desc
+            limit 10
+          `,
+          [userId],
+        ).then((r) => r.rows)
+      : Promise.resolve([]),
   ])
 
-  const savedIds = new Set((savedRows ?? []).map((r: any) => r.promotion_id))
-  const usedIds = new Set((usedRows ?? []).map((r: any) => r.promotion_id))
+  const savedIds = new Set(saved)
+  const usedIds = new Set(used)
 
-  // Only show promotions for their building or global ones
-  const filteredPromos = (promotionsData ?? []).filter(
-    (p: any) => !p.building_id || p.building_id === buildingId,
-  )
+  const filteredPromos = promotions.filter((p: any) => !p.building_id || p.building_id === buildingId)
 
-  // Build saved coupons with usage status
-  const allPromoIds = savedIds.size > 0 ? Array.from(savedIds) : []
-  let savedCouponsData: any[] = []
-  if (allPromoIds.length > 0) {
-    const { data } = await supabase
-      .from('promotions')
-      .select('id, title, discount, businesses(name)')
-      .in('id', allPromoIds)
-    savedCouponsData = data ?? []
+  let savedCouponsData: Array<{ id: string; title: string; discount: string; business_name: string | null }> = []
+  if (savedIds.size > 0) {
+    const r = await pgQuery<{ id: string; title: string; discount: string; business_name: string | null }>(
+      `
+        select p.id, p.title, p.discount, b.name as business_name
+        from public.promotions p
+        left join public.businesses b on b.id = p.business_id
+        where p.id = any($1::uuid[])
+      `,
+      [Array.from(savedIds)],
+    )
+    savedCouponsData = r.rows
   }
 
   return {
     role: 'vecino',
     profile: {
       fullName: profile.full_name ?? 'Usuario',
-      floor: profile.floor ?? null,
-      unit: profile.unit ?? null,
-      buildingName: (buildingData as any)?.name ?? null,
-      buildingAddress: (buildingData as any)?.address ?? null,
+      floor: profile.floor,
+      unit: profile.unit,
+      buildingName: building?.name ?? null,
+      buildingAddress: building?.address ?? null,
     },
     promotions: filteredPromos.map((p: any) => ({
       title: p.title,
-      businessName: (Array.isArray(p.businesses) ? p.businesses[0] : p.businesses)?.name ?? 'Negocio',
+      businessName: p.business_name ?? 'Negocio',
       discount: p.discount,
-      expirationDate: p.expiration_date,
+      expirationDate: p.expiration_date ?? '',
       isActive: p.is_active,
     })),
     savedCoupons: savedCouponsData.map((p: any) => ({
       title: p.title,
-      businessName: (Array.isArray(p.businesses) ? p.businesses[0] : p.businesses)?.name ?? 'Negocio',
+      businessName: p.business_name ?? 'Negocio',
       discount: p.discount,
       isUsed: usedIds.has(p.id),
     })),
-    marketplaceItems: (marketplaceData ?? []).map((item: any) => ({
+    marketplaceItems: marketplace.map((item: any) => ({
       title: item.title,
       price: Number(item.price ?? 0),
       condition: item.condition,
-      sellerName: (Array.isArray(item.profiles) ? item.profiles[0] : item.profiles)?.full_name ?? 'Vecino',
+      sellerName: item.seller_name ?? 'Vecino',
     })),
-    myComplaints: (complaintRows ?? []).map((c: any) => ({
+    myComplaints: complaints.map((c: any) => ({
       title: c.title,
       status: c.status,
       createdAt: c.created_at,
@@ -147,21 +168,18 @@ export interface ConsorcioContext {
 }
 
 export async function buildConsorcioContext(userId: string): Promise<ConsorcioContext | null> {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) return null
+  const profileResult = await pgQuery<{ full_name: string | null }>(
+    `select full_name from countrify.profiles where id = $1 limit 1`,
+    [userId],
+  )
+  const profile = profileResult.rows[0]
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('id', userId)
-    .single()
+  const assignmentsResult = await pgQuery<{ building_id: string }>(
+    `select building_id from countrify.building_admin_assignments where profile_id = $1`,
+    [userId],
+  )
+  const buildingIds = assignmentsResult.rows.map((r: { building_id: string }) => r.building_id)
 
-  const { data: assignments } = await supabase
-    .from('building_admin_assignments')
-    .select('building_id')
-    .eq('profile_id', userId)
-
-  const buildingIds = (assignments ?? []).map((a: any) => a.building_id)
   if (buildingIds.length === 0) {
     return {
       role: 'consorcio_admin',
@@ -170,31 +188,37 @@ export async function buildConsorcioContext(userId: string): Promise<ConsorcioCo
     }
   }
 
-  const [{ data: buildingsData }, { data: neighborsData }, { data: complaintsData }] = await Promise.all([
-    supabase.from('buildings').select('id, name, address, total_units').in('id', buildingIds),
-    supabase
-      .from('profiles')
-      .select('full_name, floor, unit, building_id')
-      .eq('role', 'vecino')
-      .in('building_id', buildingIds)
-      .order('full_name'),
-    supabase
-      .from('complaint_cases')
-      .select('title, status, building_id, created_at')
-      .in('building_id', buildingIds)
-      .order('created_at', { ascending: false })
-      .limit(30),
+  const [buildings, neighbors, complaints] = await Promise.all([
+    pgQuery<{ id: string; name: string; address: string | null; total_units: number | null }>(
+      `select id, name, address, total_units from countrify.buildings where id = any($1::uuid[])`,
+      [buildingIds],
+    ).then((r) => r.rows),
+    pgQuery<{ full_name: string | null; floor: string | null; unit: string | null; building_id: string | null }>(
+      `select full_name, floor, unit, building_id from countrify.profiles where role = 'vecino' and building_id = any($1::uuid[]) order by full_name`,
+      [buildingIds],
+    ).then((r) => r.rows),
+    pgQuery<{ title: string; status: string; building_id: string; created_at: string }>(
+      `
+        select title, status::text as status, building_id, created_at::text as created_at
+        from countrify.complaint_cases
+        where building_id = any($1::uuid[])
+        order by created_at desc
+        limit 30
+      `,
+      [buildingIds],
+    ).then((r) => r.rows),
   ])
 
-  const neighborsByBuilding = new Map<string, any[]>()
-  for (const n of neighborsData ?? []) {
+  const neighborsByBuilding = new Map<string, typeof neighbors>()
+  for (const n of neighbors) {
+    if (!n.building_id) continue
     const arr = neighborsByBuilding.get(n.building_id) ?? []
     arr.push(n)
     neighborsByBuilding.set(n.building_id, arr)
   }
 
-  const complaintsByBuilding = new Map<string, any[]>()
-  for (const c of complaintsData ?? []) {
+  const complaintsByBuilding = new Map<string, typeof complaints>()
+  for (const c of complaints) {
     const arr = complaintsByBuilding.get(c.building_id) ?? []
     arr.push(c)
     complaintsByBuilding.set(c.building_id, arr)
@@ -203,19 +227,19 @@ export async function buildConsorcioContext(userId: string): Promise<ConsorcioCo
   return {
     role: 'consorcio_admin',
     adminName: profile?.full_name ?? 'Administrador',
-    buildings: (buildingsData ?? []).map((b: any) => {
-      const neighbors = neighborsByBuilding.get(b.id) ?? []
+    buildings: buildings.map((b: any) => {
+      const list = neighborsByBuilding.get(b.id) ?? []
       const totalUnits = b.total_units ?? 0
       return {
         name: b.name,
-        address: b.address,
+        address: b.address ?? '',
         totalUnits,
-        registeredNeighbors: neighbors.length,
-        occupancyRate: Math.round((neighbors.length / Math.max(totalUnits, 1)) * 100),
-        neighbors: neighbors.map((n: any) => ({
+        registeredNeighbors: list.length,
+        occupancyRate: Math.round((list.length / Math.max(totalUnits, 1)) * 100),
+        neighbors: list.map((n: any) => ({
           fullName: n.full_name ?? 'Vecino',
-          floor: n.floor ?? null,
-          unit: n.unit ?? null,
+          floor: n.floor,
+          unit: n.unit,
         })),
         complaints: (complaintsByBuilding.get(b.id) ?? []).map((c: any) => ({
           title: c.title,
@@ -249,55 +273,64 @@ export interface NegocioContext {
 }
 
 export async function buildNegocioContext(userId: string): Promise<NegocioContext | null> {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) return null
+  const profileResult = await pgQuery<{ full_name: string | null; business_id: string | null }>(
+    `select full_name, business_id from countrify.profiles where id = $1 limit 1`,
+    [userId],
+  )
+  const profile = profileResult.rows[0]
+  const businessId = profile?.business_id ?? null
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('full_name, business_id')
-    .eq('id', userId)
-    .single()
-
-  const businessId = profile?.business_id
-
-  const [{ data: businessData }, { data: promotionsData }, { count: vecinoCount }] = await Promise.all([
+  const [business, promotions, vecinoCountResult] = await Promise.all([
     businessId
-      ? supabase.from('businesses').select('name, category, description').eq('id', businessId).maybeSingle()
-      : Promise.resolve({ data: null }),
+      ? pgQuery<{ name: string; category: string; description: string | null }>(
+          `select name, category, description from public.businesses where id = $1 limit 1`,
+          [businessId],
+        ).then((r) => r.rows[0] ?? null)
+      : Promise.resolve(null),
     businessId
-      ? supabase
-          .from('promotions')
-          .select('title, discount, expiration_date, is_active, promotion_redemptions(id)')
-          .eq('business_id', businessId)
-          .order('created_at', { ascending: false })
-      : Promise.resolve({ data: [] }),
-    supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'vecino'),
+      ? pgQuery<{
+          title: string
+          discount: string
+          expiration_date: string | null
+          is_active: boolean
+          redemption_count: number
+        }>(
+          `
+            select p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
+                   coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
+            from public.promotions p
+            where p.business_id = $1
+            order by p.created_at desc
+          `,
+          [businessId],
+        ).then((r) => r.rows)
+      : Promise.resolve([]),
+    pgQuery<{ c: number }>(
+      `select count(*)::int as c from countrify.profiles where role = 'vecino'`,
+    ).then((r) => r.rows[0]?.c ?? 0),
   ])
 
-  const promotions = (promotionsData ?? []).map((p: any) => {
-    const redemptions = Array.isArray(p.promotion_redemptions) ? p.promotion_redemptions : []
-    return {
-      title: p.title,
-      discount: p.discount,
-      expirationDate: p.expiration_date,
-      isActive: Boolean(p.is_active),
-      totalRedemptions: redemptions.length,
-    }
-  })
+  const mapped = promotions.map((p: any) => ({
+    title: p.title,
+    discount: p.discount,
+    expirationDate: p.expiration_date ?? '',
+    isActive: Boolean(p.is_active),
+    totalRedemptions: p.redemption_count,
+  }))
 
   return {
     role: 'negocio_admin',
     adminName: profile?.full_name ?? 'Administrador',
-    business: businessData
+    business: business
       ? {
-          name: (businessData as any).name,
-          category: (businessData as any).category,
-          description: (businessData as any).description ?? '',
+          name: business.name,
+          category: business.category,
+          description: business.description ?? '',
         }
       : null,
-    promotions,
-    totalRedemptions: promotions.reduce((sum, p) => sum + p.totalRedemptions, 0),
-    totalVecinos: vecinoCount ?? 0,
+    promotions: mapped,
+    totalRedemptions: mapped.reduce((sum: number, p: any) => sum + p.totalRedemptions, 0),
+    totalVecinos: vecinoCountResult,
   }
 }
 
@@ -324,84 +357,112 @@ export interface PropietarioContext {
 }
 
 export async function buildPropietarioContext(userId: string): Promise<PropietarioContext | null> {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) return null
-
-  const { data: profileRow } = await supabase
-    .from('profiles')
-    .select('full_name')
-    .eq('id', userId)
-    .single()
+  const profileResult = await pgQuery<{ full_name: string | null }>(
+    `select full_name from countrify.profiles where id = $1 limit 1`,
+    [userId],
+  )
+  const profileRow = profileResult.rows[0]
   if (!profileRow) return null
 
-  const { data: membershipRows } = await supabase
-    .from('unit_profile_memberships')
-    .select(`
-      iadmin_units (
-        id,
-        code,
-        floor,
-        iadmin_managed_properties (
-          display_name,
-          buildings ( id, name, address )
-        )
-      )
-    `)
-    .eq('profile_id', userId)
-    .eq('relationship_type', 'propietario')
-    .eq('active', true)
+  const unitRowsResult = await pgQuery<{
+    unit_id: string
+    code: string
+    floor: string | null
+    building_id: string | null
+    building_name: string | null
+    building_address: string | null
+    display_name: string | null
+  }>(
+    `
+      select
+        u.id as unit_id, u.code, u.floor,
+        b.id as building_id, b.name as building_name, b.address as building_address,
+        mp.display_name
+      from countrify.unit_profile_memberships m
+      inner join countrify.iadmin_units u on u.id = m.unit_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
+      inner join countrify.buildings b on b.id = mp.building_id
+      where m.profile_id = $1
+        and m.relationship_type = 'propietario'
+        and m.active = true
+    `,
+    [userId],
+  )
+  const unitRows = unitRowsResult.rows.map((row: any) => ({
+    unitId: row.unit_id,
+    code: row.code,
+    floor: row.floor,
+    buildingId: row.building_id ?? '',
+    buildingName: row.building_name ?? row.display_name ?? 'Edificio',
+    buildingAddress: row.building_address ?? '',
+  }))
 
-  const unitRows = (membershipRows ?? [])
-    .map((m: any) => {
-      const unit = Array.isArray(m.iadmin_units) ? m.iadmin_units[0] : m.iadmin_units
-      if (!unit) return null
-      const prop = Array.isArray(unit.iadmin_managed_properties)
-        ? unit.iadmin_managed_properties[0]
-        : unit.iadmin_managed_properties
-      const building = Array.isArray(prop?.buildings) ? prop.buildings[0] : prop?.buildings
-      return { unitId: unit.id as string, code: unit.code as string, floor: unit.floor as string | null, buildingId: building?.id as string, buildingName: building?.name ?? prop?.display_name ?? 'Edificio', buildingAddress: building?.address ?? '' }
-    })
-    .filter(Boolean) as { unitId: string; code: string; floor: string | null; buildingId: string; buildingName: string; buildingAddress: string }[]
+  const unitIds = unitRows.map((u: any) => u.unitId)
+  const buildingIds = Array.from(new Set(unitRows.map((u: any) => u.buildingId).filter(Boolean)))
 
-  const unitIds = unitRows.map((u) => u.unitId)
-  const buildingIds = Array.from(new Set(unitRows.map((u) => u.buildingId).filter(Boolean)))
-
-  const [{ data: liquidationRows }, { data: paymentRows }, { data: noticeRows }] = await Promise.all([
+  const [liquidations, payments, notices] = await Promise.all([
     unitIds.length
-      ? supabase
-          .from('iadmin_liquidation_items')
-          .select('unit_id, amount, ordinary_amount, extraordinary_amount, previous_balance, iadmin_liquidation_runs!inner(period_year, period_month, status, generated_at)')
-          .in('unit_id', unitIds)
-          .order('generated_at', { referencedTable: 'iadmin_liquidation_runs', ascending: false })
-      : Promise.resolve({ data: [] }),
+      ? pgQuery<{
+          unit_id: string
+          amount: string | null
+          ordinary_amount: string | null
+          extraordinary_amount: string | null
+          previous_balance: string | null
+          period_year: number | null
+          period_month: number | null
+        }>(
+          `
+            select
+              i.unit_id, i.amount::text as amount,
+              i.ordinary_amount::text as ordinary_amount,
+              i.extraordinary_amount::text as extraordinary_amount,
+              i.previous_balance::text as previous_balance,
+              ap.period_year, ap.period_month
+            from countrify.iadmin_liquidation_items i
+            inner join countrify.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
+            left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+            where i.unit_id = any($1::uuid[])
+            order by r.generated_at desc
+          `,
+          [unitIds],
+        ).then((r) => r.rows)
+      : Promise.resolve([]),
     unitIds.length
-      ? supabase
-          .from('iadmin_payments')
-          .select('unit_id, amount, paid_at')
-          .in('unit_id', unitIds)
-          .eq('is_void', false)
-          .order('paid_at', { ascending: false })
-          .limit(20)
-      : Promise.resolve({ data: [] }),
+      ? pgQuery<{ unit_id: string | null; amount: string; paid_at: string }>(
+          `
+            select unit_id, amount::text as amount, paid_at::text as paid_at
+            from countrify.iadmin_payments
+            where unit_id = any($1::uuid[]) and is_void = false
+            order by paid_at desc
+            limit 20
+          `,
+          [unitIds],
+        ).then((r) => r.rows)
+      : Promise.resolve([]),
     buildingIds.length
-      ? supabase
-          .from('building_information')
-          .select('title, content')
-          .in('building_id', buildingIds)
-          .eq('is_active', true)
-          .in('visible_to', ['residentes', 'propietarios'])
-          .order('sort_order', { ascending: true })
-          .limit(10)
-      : Promise.resolve({ data: [] }),
+      ? pgQuery<{ title: string; content: string }>(
+          `
+            select title, content
+            from countrify.building_information
+            where building_id = any($1::uuid[])
+              and is_active = true
+              and visible_to::text in ('residentes', 'propietarios')
+            order by sort_order asc
+            limit 10
+          `,
+          [buildingIds],
+        ).then((r) => r.rows)
+      : Promise.resolve([]),
   ])
 
-  const latestByUnit = new Map<string, any>()
-  for (const item of liquidationRows ?? []) {
+  const latestByUnit = new Map<string, (typeof liquidations)[number]>()
+  for (const item of liquidations) {
     if (!latestByUnit.has(item.unit_id)) latestByUnit.set(item.unit_id, item)
   }
 
   const paymentsByUnit = new Map<string, { amount: number; paidAt: string }[]>()
-  for (const p of paymentRows ?? []) {
+  for (const p of payments) {
+    if (!p.unit_id) continue
     const arr = paymentsByUnit.get(p.unit_id) ?? []
     arr.push({ amount: Number(p.amount ?? 0), paidAt: p.paid_at })
     paymentsByUnit.set(p.unit_id, arr)
@@ -410,9 +471,8 @@ export async function buildPropietarioContext(userId: string): Promise<Propietar
   return {
     role: 'propietario',
     fullName: profileRow.full_name ?? 'Propietario',
-    units: unitRows.map((u) => {
+    units: unitRows.map((u: any) => {
       const liq = latestByUnit.get(u.unitId)
-      const run = liq ? (Array.isArray(liq.iadmin_liquidation_runs) ? liq.iadmin_liquidation_runs[0] : liq.iadmin_liquidation_runs) : null
       const ordinary = Number(liq?.ordinary_amount ?? liq?.amount ?? 0)
       const extraordinary = Number(liq?.extraordinary_amount ?? 0)
       const previous = Number(liq?.previous_balance ?? 0)
@@ -421,13 +481,19 @@ export async function buildPropietarioContext(userId: string): Promise<Propietar
         floor: u.floor,
         buildingName: u.buildingName,
         buildingAddress: u.buildingAddress,
-        latestLiquidation: run
-          ? { period: `${run.period_year}-${String(run.period_month).padStart(2, '0')}`, ordinaryAmount: ordinary, extraordinaryAmount: extraordinary, previousBalance: previous, subtotal: ordinary + extraordinary + previous }
+        latestLiquidation: liq && liq.period_year && liq.period_month
+          ? {
+              period: `${liq.period_year}-${String(liq.period_month).padStart(2, '0')}`,
+              ordinaryAmount: ordinary,
+              extraordinaryAmount: extraordinary,
+              previousBalance: previous,
+              subtotal: ordinary + extraordinary + previous,
+            }
           : null,
         recentPayments: (paymentsByUnit.get(u.unitId) ?? []).slice(0, 5),
       }
     }),
-    buildingNotices: (noticeRows ?? []).map((n: any) => ({ title: n.title, content: n.content ?? '' })),
+    buildingNotices: notices.map((n: any) => ({ title: n.title, content: n.content ?? '' })),
   }
 }
 
@@ -447,67 +513,79 @@ export interface SuperAdminContext {
 }
 
 export async function buildSuperAdminContext(): Promise<SuperAdminContext | null> {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) return null
-
-  const [
-    { data: usersData },
-    { data: buildingsData },
-    { data: businessesData },
-    { data: promotionsData },
-    { count: redemptionCount },
-  ] = await Promise.all([
-    supabase.from('profiles').select('id, role, building_id').order('full_name'),
-    supabase.from('buildings').select('id, name, address, total_units').order('name'),
-    supabase.from('businesses').select('id, name, category').order('name'),
-    supabase
-      .from('promotions')
-      .select('id, title, discount, expiration_date, is_active, businesses(name), promotion_redemptions(id)')
-      .order('created_at', { ascending: false })
-      .limit(20),
-    supabase.from('promotion_redemptions').select('*', { count: 'exact', head: true }),
+  const [users, buildings, businesses, promotions, redemptionCountResult] = await Promise.all([
+    pgQuery<{ role: string; building_id: string | null }>(
+      `select role::text as role, building_id from countrify.profiles`,
+    ).then((r) => r.rows),
+    pgQuery<{ id: string; name: string; address: string | null; total_units: number | null }>(
+      `select id, name, address, total_units from countrify.buildings order by name`,
+    ).then((r) => r.rows),
+    pgQuery<{ id: string; name: string; category: string }>(
+      `select id, name, category from public.businesses order by name`,
+    ).then((r) => r.rows),
+    pgQuery<{
+      id: string
+      title: string
+      discount: string
+      expiration_date: string | null
+      is_active: boolean
+      business_id: string
+      business_name: string | null
+      redemption_count: number
+    }>(
+      `
+        select p.id, p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
+               p.business_id, b.name as business_name,
+               coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
+        from public.promotions p
+        left join public.businesses b on b.id = p.business_id
+        order by p.created_at desc
+        limit 20
+      `,
+    ).then((r) => r.rows),
+    pgQuery<{ c: number }>(
+      `select count(*)::int as c from countrify.promotion_redemptions`,
+    ).then((r) => r.rows[0]?.c ?? 0),
   ])
 
   const neighborsByBuilding = new Map<string, number>()
-  for (const u of usersData ?? []) {
+  for (const u of users) {
     if (u.role === 'vecino' && u.building_id) {
       neighborsByBuilding.set(u.building_id, (neighborsByBuilding.get(u.building_id) ?? 0) + 1)
     }
   }
 
-  // Count promotions & redemptions per business
   const businessPromoMap = new Map<string, { promos: number; redemptions: number }>()
-  for (const p of promotionsData ?? []) {
-    const redemptions = Array.isArray((p as any).promotion_redemptions) ? (p as any).promotion_redemptions : []
-    const current = businessPromoMap.get((p as any).business_id) ?? { promos: 0, redemptions: 0 }
+  for (const p of promotions) {
+    const current = businessPromoMap.get(p.business_id) ?? { promos: 0, redemptions: 0 }
     current.promos += 1
-    current.redemptions += redemptions.length
-    businessPromoMap.set((p as any).business_id, current)
+    current.redemptions += p.redemption_count
+    businessPromoMap.set(p.business_id, current)
   }
 
   return {
     role: 'super_admin',
-    totalUsers: (usersData ?? []).length,
-    totalVecinos: (usersData ?? []).filter((u: any) => u.role === 'vecino').length,
-    totalBuildings: (buildingsData ?? []).length,
-    totalBusinesses: (businessesData ?? []).length,
-    totalPromotions: (promotionsData ?? []).length,
-    totalRedemptions: redemptionCount ?? 0,
-    buildings: (buildingsData ?? []).map((b: any) => ({
+    totalUsers: users.length,
+    totalVecinos: users.filter((u: any) => u.role === 'vecino').length,
+    totalBuildings: buildings.length,
+    totalBusinesses: businesses.length,
+    totalPromotions: promotions.length,
+    totalRedemptions: redemptionCountResult,
+    buildings: buildings.map((b: any) => ({
       name: b.name,
-      address: b.address,
+      address: b.address ?? '',
       totalUnits: b.total_units ?? 0,
       registeredNeighbors: neighborsByBuilding.get(b.id) ?? 0,
     })),
-    businesses: (businessesData ?? []).map((b: any) => {
+    businesses: businesses.map((b: any) => {
       const stats = businessPromoMap.get(b.id) ?? { promos: 0, redemptions: 0 }
       return { name: b.name, category: b.category, promotionCount: stats.promos, redemptionCount: stats.redemptions }
     }),
-    recentPromotions: (promotionsData ?? []).slice(0, 15).map((p: any) => ({
+    recentPromotions: promotions.slice(0, 15).map((p: any) => ({
       title: p.title,
-      businessName: (Array.isArray(p.businesses) ? p.businesses[0] : p.businesses)?.name ?? 'Negocio',
+      businessName: p.business_name ?? 'Negocio',
       discount: p.discount,
-      expirationDate: p.expiration_date,
+      expirationDate: p.expiration_date ?? '',
       isActive: Boolean(p.is_active),
     })),
   }

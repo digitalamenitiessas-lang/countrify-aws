@@ -37,8 +37,6 @@
         { "name": "OPENROUTER_MODEL", "value": "openai/gpt-4o-mini" },
         { "name": "VAPID_MAILTO", "value": "mailto:admin@countrify.com.ar" },
         { "name": "NEXT_PUBLIC_VAPID_PUBLIC_KEY", "value": "BGcQUrYQM6K5SVP2_UKQLImOX_vkAJLC52dzt1C0g4yv6RQNwPz6Mfp3m3-P3vPvIHIf8P-aYvrBO4vGaZV28IQ" },
-        { "name": "NEXT_PUBLIC_SUPABASE_URL", "value": "https://vaayltwxhhrhvcewxupr.supabase.co" },
-        { "name": "NEXT_PUBLIC_SUPABASE_ANON_KEY", "value": "sb_publishable_Bdi34rn0nl4lKnCBVq8MRQ_4qvqZ6cL" },
         { "name": "NEXT_PUBLIC_SITE_URL", "value": "https://countrify.com.ar" },
         { "name": "NEXT_PUBLIC_APP_BASE_URL", "value": "https://countrify.com.ar" }
       ],

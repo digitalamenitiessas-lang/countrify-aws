@@ -11,7 +11,7 @@ import { buildSystemPrompt } from '@/lib/ai/system-prompts'
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'meta-llama/llama-3.3-8b-instruct:free'
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://countrify.com.ar'
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://citify.app'
 
 export async function POST(req: NextRequest) {
   const profile = await getCurrentProfile()
@@ -70,7 +70,7 @@ export async function POST(req: NextRequest) {
       Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': SITE_URL,
-      'X-Title': 'Countrify Assistant',
+      'X-Title': 'Citify Assistant',
     },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,

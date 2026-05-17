@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentProfile } from '@/lib/auth'
-import { getSupabaseAdminClient } from '@/lib/supabase/admin'
+import { deletePromotionInPostgres } from '@/lib/db/business'
 
 type RouteContext = {
   params: Promise<{ id: string }>
@@ -12,21 +12,15 @@ export async function DELETE(_req: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'No autenticado.' }, { status: 401 })
   }
 
-  const admin = getSupabaseAdminClient()
-  if (!admin) {
-    return NextResponse.json({ error: 'Supabase admin no esta configurado.' }, { status: 500 })
-  }
-
   const { id } = await context.params
 
-  const { error } = await admin
-    .from('promotions')
-    .delete()
-    .eq('id', id)
-    .eq('business_id', profile.businessId)
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 400 })
+  try {
+    await deletePromotionInPostgres({ promotionId: id, businessId: profile.businessId })
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : 'Error al borrar' },
+      { status: 400 },
+    )
   }
 
   return NextResponse.json({ ok: true })

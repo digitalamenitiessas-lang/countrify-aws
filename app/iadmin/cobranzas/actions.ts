@@ -3,7 +3,17 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  callIAdminNextReceiptNumberInPostgres,
+  deleteBankMovementInPostgres,
+  getCashAccountFromPostgres,
+  getLiquidationItemRunFromPostgres,
+  getPaymentForVoidFromPostgres,
+  insertBankMovementInPostgres,
+  insertCollectionPaymentInPostgres,
+  voidPaymentInPostgres,
+} from '@/lib/db/iadmin-writes'
 
 const registerSchema = z.object({
   liquidationItemId: z.string().uuid(),
@@ -19,110 +29,65 @@ const registerSchema = z.object({
 
 export async function registerCollection(input: z.input<typeof registerSchema>) {
   const parsed = registerSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  // Traer item con la cadena hasta administration
-  const { data: item } = await supabase
-    .from('iadmin_liquidation_items')
-    .select(`
-      id,
-      unit_id,
-      liquidation_run_id,
-      iadmin_liquidation_runs!inner (
-        administration_id,
-        managed_property_id,
-        status
-      )
-    `)
-    .eq('id', parsed.liquidationItemId)
-    .maybeSingle()
-
+  const item = await getLiquidationItemRunFromPostgres(parsed.liquidationItemId)
   if (!item) throw new Error('Item de liquidacion no encontrado')
-
-  const run = Array.isArray(item.iadmin_liquidation_runs)
-    ? item.iadmin_liquidation_runs[0]
-    : item.iadmin_liquidation_runs
-  const administrationId = run?.administration_id as string
-  const managedPropertyId = run?.managed_property_id as string
 
   const { profile } = await requireIAdmin({
     capability: 'collections.register',
-    administrationId,
+    administrationId: item.administration_id,
   })
 
-  // Validar que la cuenta pertenezca al mismo consorcio
-  const { data: account } = await supabase
-    .from('iadmin_cash_accounts')
-    .select('id, managed_property_id, name')
-    .eq('id', parsed.cashAccountId)
-    .maybeSingle()
+  const account = await getCashAccountFromPostgres(parsed.cashAccountId)
   if (!account) throw new Error('Cuenta no encontrada')
-  if (account.managed_property_id !== managedPropertyId) {
+  if (account.managed_property_id !== item.managed_property_id) {
     throw new Error('La cuenta no pertenece al consorcio del item')
   }
 
-  // Crear el movimiento bancario de cobranza primero (ingreso = amount positivo)
-  const { data: movement, error: movementError } = await supabase
-    .from('iadmin_bank_movements')
-    .insert({
-      administration_id: administrationId,
-      managed_property_id: managedPropertyId,
-      cash_account_id: parsed.cashAccountId,
-      movement_date: parsed.paidAt,
-      description: `Cobranza expensas`,
-      amount: parsed.amount,
-      external_ref: parsed.reference ?? null,
-      movement_kind: 'collection',
-      created_by: profile.id,
-    })
-    .select('id')
-    .single()
-
-  if (movementError) throw new Error(movementError.message)
-
-  // Obtener N° de recibo atomico via RPC
-  const { data: receiptNumber, error: receiptError } = await supabase.rpc('iadmin_next_receipt_number', {
-    admin_id: administrationId,
+  const movement = await insertBankMovementInPostgres({
+    administrationId: item.administration_id,
+    managedPropertyId: item.managed_property_id,
+    cashAccountId: parsed.cashAccountId,
+    movementDate: parsed.paidAt,
+    description: 'Cobranza expensas',
+    amount: parsed.amount,
+    externalRef: parsed.reference ?? null,
+    movementKind: 'collection',
+    createdBy: profile.id,
   })
 
-  if (receiptError) throw new Error(receiptError.message)
+  const receiptNumber = await callIAdminNextReceiptNumberInPostgres(item.administration_id)
 
-  // Insertar el pago linkeado al movimiento
-  const { data: payment, error } = await supabase
-    .from('iadmin_payments')
-    .insert({
-      administration_id: administrationId,
-      managed_property_id: managedPropertyId,
-      liquidation_run_id: item.liquidation_run_id,
-      liquidation_item_id: parsed.liquidationItemId,
-      unit_id: item.unit_id,
-      cash_account_id: parsed.cashAccountId,
-      bank_movement_id: movement.id,
+  let payment: { id: string; receipt_number: string }
+  try {
+    payment = await insertCollectionPaymentInPostgres({
+      administrationId: item.administration_id,
+      managedPropertyId: item.managed_property_id,
+      liquidationRunId: item.liquidation_run_id,
+      liquidationItemId: parsed.liquidationItemId,
+      unitId: item.unit_id,
+      cashAccountId: parsed.cashAccountId,
+      bankMovementId: movement.id,
       amount: parsed.amount,
-      surcharge_amount: parsed.surchargeAmount ?? 0,
-      paid_at: parsed.paidAt,
+      surchargeAmount: parsed.surchargeAmount ?? 0,
+      paidAt: parsed.paidAt,
       method: parsed.method ?? null,
       reference: parsed.reference ?? null,
-      receipt_number: receiptNumber,
-      due_label: parsed.dueLabel ?? null,
+      receiptNumber,
+      dueLabel: parsed.dueLabel ?? null,
       notes: parsed.notes ?? null,
-      created_by: profile.id,
+      createdBy: profile.id,
     })
-    .select('id, receipt_number')
-    .single()
-
-  if (error) {
-    // Rollback del movement si el payment fallo
-    await supabase.from('iadmin_bank_movements').delete().eq('id', movement.id)
-    throw new Error(error.message)
+  } catch (error) {
+    await deleteBankMovementInPostgres(movement.id)
+    throw error instanceof Error ? error : new Error('No se pudo registrar el pago')
   }
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_payments',
-    entity_id: payment.id,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: item.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_payments',
+    entityId: payment.id,
     action: 'payment.registered',
     metadata: {
       amount: parsed.amount,
@@ -132,11 +97,11 @@ export async function registerCollection(input: z.input<typeof registerSchema>) 
   })
 
   revalidatePath(`/iadmin/liquidaciones/${item.liquidation_run_id}`)
-  revalidatePath(`/iadmin/consorcios/${managedPropertyId}`)
-  revalidatePath(`/iadmin/consorcios/${managedPropertyId}/cuentas`)
+  revalidatePath(`/iadmin/consorcios/${item.managed_property_id}`)
+  revalidatePath(`/iadmin/consorcios/${item.managed_property_id}/cuentas`)
   revalidatePath(`/iadmin/cobranzas`)
 
-  return { id: payment.id as string, receiptNumber: payment.receipt_number as string }
+  return { id: payment.id, receiptNumber: payment.receipt_number }
 }
 
 const voidSchema = z.object({
@@ -146,14 +111,8 @@ const voidSchema = z.object({
 
 export async function voidCollection(input: z.input<typeof voidSchema>) {
   const parsed = voidSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: payment } = await supabase
-    .from('iadmin_payments')
-    .select('id, administration_id, managed_property_id, liquidation_run_id, bank_movement_id, is_void')
-    .eq('id', parsed.paymentId)
-    .maybeSingle()
+  const payment = await getPaymentForVoidFromPostgres(parsed.paymentId)
   if (!payment) throw new Error('Pago no encontrado')
   if (payment.is_void) throw new Error('El pago ya esta anulado')
 
@@ -162,29 +121,21 @@ export async function voidCollection(input: z.input<typeof voidSchema>) {
     administrationId: payment.administration_id,
   })
 
-  // Marcar anulado
-  const { error } = await supabase
-    .from('iadmin_payments')
-    .update({
-      is_void: true,
-      voided_at: new Date().toISOString(),
-      voided_by: profile.id,
-      void_reason: parsed.reason,
-    })
-    .eq('id', parsed.paymentId)
+  await voidPaymentInPostgres({
+    paymentId: parsed.paymentId,
+    voidedBy: profile.id,
+    reason: parsed.reason,
+  })
 
-  if (error) throw new Error(error.message)
-
-  // Borrar el movimiento bancario asociado (el pago ya no suma al saldo)
   if (payment.bank_movement_id) {
-    await supabase.from('iadmin_bank_movements').delete().eq('id', payment.bank_movement_id)
+    await deleteBankMovementInPostgres(payment.bank_movement_id)
   }
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: payment.administration_id,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_payments',
-    entity_id: parsed.paymentId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: payment.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_payments',
+    entityId: parsed.paymentId,
     action: 'payment.voided',
     metadata: { reason: parsed.reason },
   })

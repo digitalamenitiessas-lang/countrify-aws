@@ -1,8 +1,13 @@
 import {
+  AdminCreateUserCommand,
+  AdminGetUserCommand,
+  AdminSetUserPasswordCommand,
   AuthFlowType,
   CognitoIdentityProviderClient,
   DescribeUserPoolCommand,
   InitiateAuthCommand,
+  MessageActionType,
+  UsernameExistsException,
 } from '@aws-sdk/client-cognito-identity-provider'
 
 type CognitoEnv = {
@@ -59,6 +64,66 @@ export async function describeConfiguredUserPool() {
   )
 
   return result.UserPool ?? null
+}
+
+export async function adminCreateCognitoUser(input: {
+  email: string
+  password: string
+  fullName: string
+}): Promise<{ sub: string; alreadyExisted: boolean }> {
+  const env = getCognitoEnv()
+  const client = getCognitoClient()
+
+  if (!env || !client) {
+    throw new Error('Cognito no esta configurado.')
+  }
+
+  const username = input.email.trim().toLowerCase()
+
+  let alreadyExisted = false
+  try {
+    await client.send(
+      new AdminCreateUserCommand({
+        UserPoolId: env.userPoolId,
+        Username: username,
+        MessageAction: MessageActionType.SUPPRESS,
+        UserAttributes: [
+          { Name: 'email', Value: username },
+          { Name: 'email_verified', Value: 'true' },
+          { Name: 'name', Value: input.fullName },
+        ],
+      }),
+    )
+  } catch (error) {
+    if (error instanceof UsernameExistsException) {
+      alreadyExisted = true
+    } else {
+      throw error
+    }
+  }
+
+  await client.send(
+    new AdminSetUserPasswordCommand({
+      UserPoolId: env.userPoolId,
+      Username: username,
+      Password: input.password,
+      Permanent: true,
+    }),
+  )
+
+  const describe = await client.send(
+    new AdminGetUserCommand({
+      UserPoolId: env.userPoolId,
+      Username: username,
+    }),
+  )
+
+  const sub = describe.UserAttributes?.find((attr) => attr.Name === 'sub')?.Value
+  if (!sub) {
+    throw new Error('Cognito no devolvio el sub del usuario.')
+  }
+
+  return { sub, alreadyExisted }
 }
 
 export async function signInWithCognitoPassword(email: string, password: string) {

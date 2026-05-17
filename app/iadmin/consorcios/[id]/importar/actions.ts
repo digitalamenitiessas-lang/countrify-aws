@@ -3,11 +3,13 @@
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { runAIChat, stripJsonFences } from '@/lib/iadmin/ai-chat'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
-
-// ----------------------------------------------------------------------------
-// Analisis de columnas con IA
-// ----------------------------------------------------------------------------
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  closeActiveHoldersOfKindInPostgres,
+  insertUnitHolderInPostgres,
+  listUnitsByPropertyMinimalFromPostgres,
+  upsertUnitInPostgres,
+} from '@/lib/db/iadmin-writes'
 
 const targetFields = [
   'unit_code',
@@ -75,7 +77,7 @@ Recibis los headers y muestras de filas del Excel del admin. Tu trabajo es devol
 }
 
 Reglas:
-- Usá las muestras para decidir. Ej: si una columna tiene "Juan Perez" es holder_name.
+- Usá las muestras para decidir.
 - Si una columna tiene "1A", "2B", "PH" es unit_code.
 - Si una columna tiene numeros entre 0 y 1 tipo 0.125, 0.15 es prorata_percent (decimal).
 - Si una columna tiene numeros tipo 12.5, 20.00, 100 es prorata_percent (porcentaje).
@@ -92,13 +94,7 @@ export async function analyzeImportColumns(
     administrationId: parsed.administrationId,
   })
 
-  const userPrompt = `Headers:
-${JSON.stringify(parsed.headers)}
-
-Muestras de filas (primeras ${parsed.sampleRows.length}):
-${JSON.stringify(parsed.sampleRows, null, 2)}
-
-Devolvé el JSON de mapeo.`
+  const userPrompt = `Headers:\n${JSON.stringify(parsed.headers)}\n\nMuestras de filas:\n${JSON.stringify(parsed.sampleRows, null, 2)}\n\nDevolvé el JSON de mapeo.`
 
   const raw = await runAIChat({
     systemPrompt: SYSTEM_PROMPT,
@@ -116,7 +112,6 @@ Devolvé el JSON de mapeo.`
     throw new Error('La IA devolvio un formato invalido')
   }
 
-  // Validar que cada valor esté en los target fields
   const mapping: Record<string, ImportTargetField> = {}
   if (typeof parsedJson === 'object' && parsedJson !== null) {
     for (const [k, v] of Object.entries(parsedJson as Record<string, unknown>)) {
@@ -128,17 +123,12 @@ Devolvé el JSON de mapeo.`
     }
   }
 
-  // Headers que vinieron pero no aparecen en el JSON → ignore
   for (const h of parsed.headers) {
     if (!(h in mapping)) mapping[h] = 'ignore'
   }
 
   return { mapping, labels: TARGET_LABELS }
 }
-
-// ----------------------------------------------------------------------------
-// Bulk import
-// ----------------------------------------------------------------------------
 
 const unitKindMap: Record<string, string> = {
   depto: 'departamento',
@@ -187,8 +177,6 @@ function normalizeProrata(raw: unknown): number | null {
   const n = Number(s)
   if (!Number.isFinite(n)) return null
   if (n < 0) return null
-  // Si viene como 12.5 (porcentaje) lo convertimos a decimal 0.125
-  // Si viene como 0.125 (decimal) lo dejamos.
   if (n > 1.5) return n / 100
   return n
 }
@@ -225,10 +213,6 @@ export async function importUnitsAndHolders(
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-
-  // Invertir mapping: target_field → source_column
   const targetToSource: Record<string, string> = {}
   for (const [source, target] of Object.entries(parsed.mapping)) {
     targetToSource[target] = source
@@ -248,13 +232,9 @@ export async function importUnitsAndHolders(
     skippedRows: [],
   }
 
-  // Preload unidades existentes
-  const { data: existingUnitsRaw } = await supabase
-    .from('iadmin_units')
-    .select('id, code')
-    .eq('managed_property_id', parsed.propertyId)
+  const existingUnitsRaw = await listUnitsByPropertyMinimalFromPostgres(parsed.propertyId)
   const existingUnits = new Map<string, string>(
-    (existingUnitsRaw ?? []).map((u: any) => [String(u.code).trim(), u.id as string]),
+    existingUnitsRaw.map((u) => [String(u.code).trim(), u.id]),
   )
 
   for (let i = 0; i < parsed.rows.length; i++) {
@@ -268,53 +248,39 @@ export async function importUnitsAndHolders(
     }
 
     const kind = normalizeUnitKind(readField(row, 'unit_kind'))
-    const floor = readField(row, 'floor') !== undefined ? String(readField(row, 'floor')).trim() : null
+    const floorRaw = readField(row, 'floor')
+    const floor = floorRaw !== undefined ? String(floorRaw).trim() : null
     const surface = normalizeNumber(readField(row, 'surface_m2'))
     const prorata = normalizeProrata(readField(row, 'prorata_percent'))
 
     let unitId = existingUnits.get(code)
+    const wasUpdate = Boolean(unitId)
 
-    if (unitId) {
-      // update
-      const { error } = await supabase
-        .from('iadmin_units')
-        .update({
-          kind,
-          floor,
-          surface_m2: surface,
-          prorata_coefficient: prorata,
-          is_active: true,
-        })
-        .eq('id', unitId)
-      if (error) {
-        result.skippedRows.push({ index: i, reason: `Update unit error: ${error.message}` })
-        continue
+    try {
+      const upserted = await upsertUnitInPostgres({
+        id: unitId ?? null,
+        managedPropertyId: parsed.propertyId,
+        code,
+        kind,
+        floor,
+        surfaceM2: surface,
+        prorataCoefficient: prorata,
+      })
+      unitId = upserted.id
+      if (!wasUpdate) {
+        existingUnits.set(code, unitId)
+        result.unitsCreated += 1
+      } else {
+        result.unitsUpdated += 1
       }
-      result.unitsUpdated += 1
-    } else {
-      const { data: newUnit, error } = await supabase
-        .from('iadmin_units')
-        .insert({
-          managed_property_id: parsed.propertyId,
-          code,
-          kind,
-          floor,
-          surface_m2: surface,
-          prorata_coefficient: prorata,
-          is_active: true,
-        })
-        .select('id')
-        .single()
-      if (error || !newUnit) {
-        result.skippedRows.push({ index: i, reason: `Insert unit error: ${error?.message ?? 'unknown'}` })
-        continue
-      }
-      unitId = newUnit.id as string
-      existingUnits.set(code, unitId)
-      result.unitsCreated += 1
+    } catch (error) {
+      result.skippedRows.push({
+        index: i,
+        reason: `${wasUpdate ? 'Update' : 'Insert'} unit error: ${error instanceof Error ? error.message : 'unknown'}`,
+      })
+      continue
     }
 
-    // Holder (si viene nombre)
     const rawHolderName = readField(row, 'holder_name')
     const holderName = rawHolderName ? String(rawHolderName).trim() : ''
     if (!holderName) continue
@@ -324,37 +290,30 @@ export async function importUnitsAndHolders(
     const holderEmail = readField(row, 'holder_email')
     const holderPhone = readField(row, 'holder_phone')
 
-    // Si pidio reemplazar activos del mismo kind, los cerramos
     if (parsed.replaceActiveHolders) {
-      await supabase
-        .from('iadmin_unit_holders')
-        .update({ is_active: false, end_date: new Date().toISOString().slice(0, 10) })
-        .eq('unit_id', unitId)
-        .eq('holder_kind', holderKind)
-        .eq('is_active', true)
+      await closeActiveHoldersOfKindInPostgres({ unitId, holderKind })
     }
 
-    const { error: holderError } = await supabase.from('iadmin_unit_holders').insert({
-      unit_id: unitId,
-      full_name: holderName,
-      holder_kind: holderKind,
-      tax_id: holderTaxId ? String(holderTaxId).trim() : null,
-      email: holderEmail ? String(holderEmail).trim() : null,
-      phone: holderPhone ? String(holderPhone).trim() : null,
-      is_active: true,
-    })
-    if (holderError) {
-      result.holdersSkipped += 1
-    } else {
+    try {
+      await insertUnitHolderInPostgres({
+        unitId,
+        fullName: holderName,
+        holderKind,
+        taxId: holderTaxId ? String(holderTaxId).trim() : null,
+        email: holderEmail ? String(holderEmail).trim() : null,
+        phone: holderPhone ? String(holderPhone).trim() : null,
+      })
       result.holdersCreated += 1
+    } catch {
+      result.holdersSkipped += 1
     }
   }
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: parsed.administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_managed_properties',
-    entity_id: parsed.propertyId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_managed_properties',
+    entityId: parsed.propertyId,
     action: 'bulk_import.units',
     metadata: {
       units_created: result.unitsCreated,

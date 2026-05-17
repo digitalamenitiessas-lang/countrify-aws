@@ -4,19 +4,47 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { getIAdminUnitAccountStatement } from '@/lib/data'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  bulkInsertLiquidationItemsInPostgres,
+  bulkInsertShareTokensInPostgres,
+  bulkRevokeShareTokensInPostgres,
+  callIAdminNextReceiptNumberInPostgres,
+  deleteBankMovementInPostgres,
+  deleteExpenseFromPostgres,
+  deleteLiquidationItemsForRunInPostgres,
+  ensureAccountingPeriodInPostgres,
+  findExpenseInPeriodByProviderFromPostgres,
+  findProviderByNameWithRecurringFromPostgres,
+  getAccountingPeriodIdAndStatusFromPostgres,
+  getFirstActiveCashAccountFromPostgres,
+  getLiquidationItemByRunUnitFromPostgres,
+  getLiquidationRunByPeriodFromPostgres,
+  getManagedPropertyAdminIdFromPostgres,
+  getManagedPropertyForEmitFromPostgres,
+  getProviderNameAndDefaultDescFromPostgres,
+  insertBankMovementInPostgres,
+  insertCollectionPaymentInPostgres,
+  insertExpenseInPostgres,
+  insertProviderRecurringFromPostgres,
+  listActiveUnitsWithHoldersForEmitFromPostgres,
+  listImputedExpensesAmountsByPeriodFromPostgres,
+  listLiquidationItemsByRunFromPostgres,
+  listLiveShareTokensByItemsFromPostgres,
+  listPriorRunItemsForEmitFromPostgres,
+  setProviderRecurringInPostgres,
+  sumLivePaymentsByItemIdsFromPostgres,
+  updateExpenseAmountInPostgres,
+  upsertIssuedLiquidationRunInPostgres,
+} from '@/lib/db/iadmin-writes'
 import type { IAdminExpenseStatus, IAdminUnitAccountStatement } from '@/lib/types'
-
-// ----------------------------------------------------------------------------
-// upsertMonthlyCell: crear/actualizar/borrar el gasto de 1 celda
-// ----------------------------------------------------------------------------
 
 const cellSchema = z.object({
   propertyId: z.string().uuid(),
-  providerId: z.string().uuid().nullable(),   // null = gasto sin proveedor
+  providerId: z.string().uuid().nullable(),
   year: z.number().int().min(2020).max(2100),
   month: z.number().int().min(1).max(12),
-  amount: z.number().nullable(),               // null o 0 = borrar
+  amount: z.number().nullable(),
   description: z.string().trim().max(240).optional(),
   expenseKind: z.enum(['ordinaria', 'extraordinaria']).optional().default('ordinaria'),
 })
@@ -25,14 +53,8 @@ export async function upsertMonthlyCell(
   input: z.input<typeof cellSchema>,
 ): Promise<{ action: 'created' | 'updated' | 'deleted' | 'noop'; expenseId: string | null }> {
   const parsed = cellSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: property } = await supabase
-    .from('iadmin_managed_properties')
-    .select('id, administration_id')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
   if (!property) throw new Error('Consorcio no encontrado')
 
   const { profile, context } = await requireIAdmin({
@@ -40,64 +62,46 @@ export async function upsertMonthlyCell(
     administrationId: property.administration_id,
   })
 
-  // Resolver período (crear si no existe)
-  const { data: existingPeriod } = await supabase
-    .from('iadmin_accounting_periods')
-    .select('id, status')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('period_year', parsed.year)
-    .eq('period_month', parsed.month)
-    .maybeSingle()
+  const existingPeriod = await getAccountingPeriodIdAndStatusFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    periodYear: parsed.year,
+    periodMonth: parsed.month,
+  })
 
   let periodId: string
   let periodStatus: string
   if (existingPeriod) {
-    periodId = existingPeriod.id as string
-    periodStatus = existingPeriod.status as string
+    periodId = existingPeriod.id
+    periodStatus = existingPeriod.status
   } else {
-    const { data: np, error: pErr } = await supabase
-      .from('iadmin_accounting_periods')
-      .insert({
-        managed_property_id: parsed.propertyId,
-        period_year: parsed.year,
-        period_month: parsed.month,
-        status: 'open',
-      })
-      .select('id, status')
-      .single()
-    if (pErr || !np) throw new Error(pErr?.message ?? 'No se pudo crear el periodo')
-    periodId = np.id as string
-    periodStatus = np.status as string
+    const created = await ensureAccountingPeriodInPostgres({
+      managedPropertyId: parsed.propertyId,
+      periodYear: parsed.year,
+      periodMonth: parsed.month,
+    })
+    periodId = created.id
+    periodStatus = 'open'
   }
 
   if (periodStatus === 'closed') {
     throw new Error('El período del mes está cerrado. Reabrilo desde Liquidaciones para editar.')
   }
 
-  // Buscar gasto existente para ese (property, provider, period)
-  let existingQuery = supabase
-    .from('iadmin_expenses')
-    .select('id, status')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('accounting_period_id', periodId)
-  if (parsed.providerId) {
-    existingQuery = existingQuery.eq('provider_id', parsed.providerId)
-  } else {
-    existingQuery = existingQuery.is('provider_id', null)
-  }
-  const { data: existingList } = await existingQuery
+  const existing = await findExpenseInPeriodByProviderFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    accountingPeriodId: periodId,
+    providerId: parsed.providerId,
+  })
 
-  const existing = existingList && existingList.length === 1 ? existingList[0] : null
   const wantsDelete = parsed.amount === null || parsed.amount === 0
 
   if (wantsDelete && existing) {
-    const { error } = await supabase.from('iadmin_expenses').delete().eq('id', existing.id)
-    if (error) throw new Error(error.message)
-    await supabase.from('iadmin_audit_logs').insert({
-      administration_id: property.administration_id,
-      actor_profile_id: profile.id,
-      entity_type: 'iadmin_expenses',
-      entity_id: existing.id,
+    await deleteExpenseFromPostgres(existing.id)
+    await insertIAdminAuditLogInPostgres({
+      administrationId: property.administration_id,
+      actorProfileId: profile.id,
+      entityType: 'iadmin_expenses',
+      entityId: existing.id,
       action: 'expense.deleted_from_planilla',
       metadata: { period: `${parsed.year}-${parsed.month}` },
     })
@@ -111,21 +115,17 @@ export async function upsertMonthlyCell(
 
   const amount = parsed.amount as number
 
-  // Si el user puede aprobar, imputed directo
-  const canApprove = context.isSuperAdmin || (context.memberships
-    .find((m) => m.administration.id === property.administration_id)
-    ?.capabilities.includes('expenses.approve') ?? false)
+  const canApprove =
+    context.isSuperAdmin ||
+    (context.memberships
+      .find((m) => m.administration.id === property.administration_id)
+      ?.capabilities.includes('expenses.approve') ?? false)
   const targetStatus: IAdminExpenseStatus = canApprove ? 'imputed' : 'pending_review'
 
-  // Nombre descriptivo
   let description = parsed.description?.trim() ?? ''
   if (!description) {
     if (parsed.providerId) {
-      const { data: provider } = await supabase
-        .from('iadmin_providers')
-        .select('name, default_description')
-        .eq('id', parsed.providerId)
-        .maybeSingle()
+      const provider = await getProviderNameAndDefaultDescFromPostgres(parsed.providerId)
       description = (provider?.default_description?.trim() || provider?.name || 'Gasto') + ` - ${String(parsed.month).padStart(2, '0')}/${parsed.year}`
     } else {
       description = `Gasto - ${String(parsed.month).padStart(2, '0')}/${parsed.year}`
@@ -133,53 +133,40 @@ export async function upsertMonthlyCell(
   }
 
   if (existing) {
-    const { error } = await supabase
-      .from('iadmin_expenses')
-      .update({
-        amount,
-        description,
-        expense_kind: parsed.expenseKind ?? 'ordinaria',
-        status: targetStatus,
-        ...(targetStatus === 'imputed' && existing.status !== 'imputed'
-          ? { approved_by: profile.id, approved_at: new Date().toISOString() }
-          : {}),
-      })
-      .eq('id', existing.id)
-    if (error) throw new Error(error.message)
+    await updateExpenseAmountInPostgres({
+      expenseId: existing.id,
+      amount,
+      description,
+      expenseKind: parsed.expenseKind ?? 'ordinaria',
+      status: targetStatus,
+      approvedBy: profile.id,
+      setApprovedTimestamp: targetStatus === 'imputed' && existing.status !== 'imputed',
+    })
     revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
-    return { action: 'updated', expenseId: existing.id as string }
+    return { action: 'updated', expenseId: existing.id }
   }
 
-  // Issued date: ultimo dia habil del mes del periodo (default conservador = dia 5)
   const issuedAt = new Date(parsed.year, parsed.month - 1, 5).toISOString().slice(0, 10)
-
-  const { data: inserted, error } = await supabase
-    .from('iadmin_expenses')
-    .insert({
-      administration_id: property.administration_id,
-      managed_property_id: parsed.propertyId,
-      accounting_period_id: periodId,
-      provider_id: parsed.providerId,
-      description,
-      amount,
-      currency: 'ARS',
-      issued_at: issuedAt,
-      status: targetStatus,
-      expense_kind: parsed.expenseKind ?? 'ordinaria',
-      created_by: profile.id,
-      ...(targetStatus === 'imputed' ? { approved_by: profile.id, approved_at: new Date().toISOString() } : {}),
-    })
-    .select('id')
-    .single()
-  if (error) throw new Error(error.message)
+  const inserted = await insertExpenseInPostgres({
+    administrationId: property.administration_id,
+    managedPropertyId: parsed.propertyId,
+    accountingPeriodId: periodId,
+    providerId: parsed.providerId,
+    category: null,
+    description,
+    amount,
+    currency: 'ARS',
+    issuedAt,
+    dueAt: null,
+    status: targetStatus,
+    expenseKind: parsed.expenseKind ?? 'ordinaria',
+    createdBy: profile.id,
+    approvedBy: targetStatus === 'imputed' ? profile.id : null,
+  })
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
-  return { action: 'created', expenseId: inserted.id as string }
+  return { action: 'created', expenseId: inserted.id }
 }
-
-// ----------------------------------------------------------------------------
-// addRecurringRubro: agregar un rubro nuevo a la planilla (crea provider recurrente)
-// ----------------------------------------------------------------------------
 
 const addRubroSchema = z.object({
   administrationId: z.string().uuid(),
@@ -188,57 +175,42 @@ const addRubroSchema = z.object({
   recurringKind: z.enum(['ordinaria', 'extraordinaria']).optional().default('ordinaria'),
 })
 
-export async function addRecurringRubro(input: z.input<typeof addRubroSchema>): Promise<{ providerId: string }> {
+export async function addRecurringRubro(
+  input: z.input<typeof addRubroSchema>,
+): Promise<{ providerId: string }> {
   const parsed = addRubroSchema.parse(input)
   await requireIAdmin({
     capability: 'providers.manage',
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-
-  // Si ya existe un provider con ese nombre, lo marcamos recurring si no lo era
-  const { data: existing } = await supabase
-    .from('iadmin_providers')
-    .select('id, is_recurring')
-    .eq('administration_id', parsed.administrationId)
-    .ilike('name', parsed.name.trim())
-    .maybeSingle()
+  const existing = await findProviderByNameWithRecurringFromPostgres({
+    administrationId: parsed.administrationId,
+    name: parsed.name.trim(),
+  })
 
   if (existing) {
     if (!existing.is_recurring) {
-      await supabase
-        .from('iadmin_providers')
-        .update({ is_recurring: true, recurring_kind: parsed.recurringKind })
-        .eq('id', existing.id)
+      await setProviderRecurringInPostgres({
+        providerId: existing.id,
+        isRecurring: true,
+        recurringKind: parsed.recurringKind ?? 'ordinaria',
+      })
     }
     revalidatePath('/iadmin/consorcios', 'layout')
-    return { providerId: existing.id as string }
+    return { providerId: existing.id }
   }
 
-  const { data: created, error } = await supabase
-    .from('iadmin_providers')
-    .insert({
-      administration_id: parsed.administrationId,
-      name: parsed.name.trim(),
-      category: parsed.category ?? null,
-      default_category: parsed.category ?? null,
-      is_recurring: true,
-      recurring_kind: parsed.recurringKind ?? 'ordinaria',
-      is_active: true,
-    })
-    .select('id')
-    .single()
-  if (error) throw new Error(error.message)
+  const created = await insertProviderRecurringFromPostgres({
+    administrationId: parsed.administrationId,
+    name: parsed.name.trim(),
+    category: parsed.category ?? null,
+    recurringKind: parsed.recurringKind ?? 'ordinaria',
+  })
 
   revalidatePath('/iadmin/consorcios', 'layout')
-  return { providerId: created.id as string }
+  return { providerId: created.id }
 }
-
-// ----------------------------------------------------------------------------
-// emitAndNotify: el boton magico del admin
-// ----------------------------------------------------------------------------
 
 const emitSchema = z.object({
   propertyId: z.string().uuid(),
@@ -285,10 +257,6 @@ function formatARS(n: number): string {
   }).format(n)
 }
 
-// ----------------------------------------------------------------------------
-// quickPayFromMesa: cobra el saldo de una unidad del run actual con 1 click
-// ----------------------------------------------------------------------------
-
 const quickPaySchema = z.object({
   propertyId: z.string().uuid(),
   year: z.number().int(),
@@ -297,22 +265,12 @@ const quickPaySchema = z.object({
   amount: z.number().positive(),
 })
 
-function _randomToken(): string {
-  const bytes = new Uint8Array(18)
-  crypto.getRandomValues(bytes)
-  return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-
-export async function quickPayFromMesa(input: z.input<typeof quickPaySchema>): Promise<{ receiptNumber: string }> {
+export async function quickPayFromMesa(
+  input: z.input<typeof quickPaySchema>,
+): Promise<{ receiptNumber: string }> {
   const parsed = quickPaySchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: property } = await supabase
-    .from('iadmin_managed_properties')
-    .select('id, administration_id')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
   if (!property) throw new Error('Consorcio no encontrado')
 
   const { profile } = await requireIAdmin({
@@ -320,98 +278,77 @@ export async function quickPayFromMesa(input: z.input<typeof quickPaySchema>): P
     administrationId: property.administration_id,
   })
 
-  const { data: period } = await supabase
-    .from('iadmin_accounting_periods')
-    .select('id')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('period_year', parsed.year)
-    .eq('period_month', parsed.month)
-    .maybeSingle()
+  const period = await getAccountingPeriodIdAndStatusFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    periodYear: parsed.year,
+    periodMonth: parsed.month,
+  })
   if (!period) throw new Error('Período no encontrado')
 
-  const { data: run } = await supabase
-    .from('iadmin_liquidation_runs')
-    .select('id')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('accounting_period_id', period.id)
-    .maybeSingle()
+  const run = await getLiquidationRunByPeriodFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    accountingPeriodId: period.id,
+  })
   if (!run) throw new Error('No hay liquidación emitida para este mes')
 
-  const { data: item } = await supabase
-    .from('iadmin_liquidation_items')
-    .select('id')
-    .eq('liquidation_run_id', run.id)
-    .eq('unit_id', parsed.unitId)
-    .maybeSingle()
+  const item = await getLiquidationItemByRunUnitFromPostgres({
+    runId: run.id,
+    unitId: parsed.unitId,
+  })
   if (!item) throw new Error('Unidad sin item en la liquidación')
 
-  const { data: cashAccount } = await supabase
-    .from('iadmin_cash_accounts')
-    .select('id, name')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('is_active', true)
-    .order('created_at')
-    .limit(1)
-    .maybeSingle()
+  const cashAccount = await getFirstActiveCashAccountFromPostgres(parsed.propertyId)
   if (!cashAccount) throw new Error('Configurá una cuenta bancaria antes de cobrar')
 
   const today = new Date().toISOString().slice(0, 10)
-  const { data: movement, error: movError } = await supabase
-    .from('iadmin_bank_movements')
-    .insert({
-      administration_id: property.administration_id,
-      managed_property_id: parsed.propertyId,
-      cash_account_id: cashAccount.id,
-      movement_date: today,
-      description: 'Cobranza',
-      amount: parsed.amount,
-      movement_kind: 'collection',
-      created_by: profile.id,
-    })
-    .select('id')
-    .single()
-  if (movError) throw new Error(movError.message)
-
-  const { data: receipt, error: receiptError } = await supabase.rpc('iadmin_next_receipt_number', {
-    admin_id: property.administration_id,
-  })
-  if (receiptError) throw new Error(receiptError.message)
-
-  const { error } = await supabase.from('iadmin_payments').insert({
-    administration_id: property.administration_id,
-    managed_property_id: parsed.propertyId,
-    liquidation_run_id: run.id,
-    liquidation_item_id: item.id,
-    unit_id: parsed.unitId,
-    cash_account_id: cashAccount.id,
-    bank_movement_id: movement.id,
+  const movement = await insertBankMovementInPostgres({
+    administrationId: property.administration_id,
+    managedPropertyId: parsed.propertyId,
+    cashAccountId: cashAccount.id,
+    movementDate: today,
+    description: 'Cobranza',
     amount: parsed.amount,
-    paid_at: today,
-    method: 'transferencia',
-    receipt_number: receipt,
-    created_by: profile.id,
+    externalRef: null,
+    movementKind: 'collection',
+    createdBy: profile.id,
   })
-  if (error) {
-    await supabase.from('iadmin_bank_movements').delete().eq('id', movement.id)
-    throw new Error(error.message)
+
+  const receiptNumber = await callIAdminNextReceiptNumberInPostgres(property.administration_id)
+
+  try {
+    await insertCollectionPaymentInPostgres({
+      administrationId: property.administration_id,
+      managedPropertyId: parsed.propertyId,
+      liquidationRunId: run.id,
+      liquidationItemId: item.id,
+      unitId: parsed.unitId,
+      cashAccountId: cashAccount.id,
+      bankMovementId: movement.id,
+      amount: parsed.amount,
+      surchargeAmount: 0,
+      paidAt: today,
+      method: 'transferencia',
+      reference: null,
+      receiptNumber,
+      dueLabel: null,
+      notes: null,
+      createdBy: profile.id,
+    })
+  } catch (error) {
+    await deleteBankMovementInPostgres(movement.id)
+    throw error
   }
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
-  return { receiptNumber: receipt as string }
+  return { receiptNumber }
 }
 
 export async function emitAndNotify(
   input: z.input<typeof emitSchema>,
 ): Promise<EmitAndNotifyResult> {
   const parsed = emitSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: property } = await supabase
-    .from('iadmin_managed_properties')
-    .select('id, administration_id, display_name, buildings(name), iadmin_administrations(name, legal_info)')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
+  const property = await getManagedPropertyForEmitFromPostgres(parsed.propertyId)
   if (!property) throw new Error('Consorcio no encontrado')
 
   const { profile } = await requireIAdmin({
@@ -419,89 +356,55 @@ export async function emitAndNotify(
     administrationId: property.administration_id,
   })
 
-  // 1. Asegurar que existe el periodo
-  const { data: period } = await supabase
-    .from('iadmin_accounting_periods')
-    .select('id, status')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('period_year', parsed.year)
-    .eq('period_month', parsed.month)
-    .maybeSingle()
+  const period = await getAccountingPeriodIdAndStatusFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    periodYear: parsed.year,
+    periodMonth: parsed.month,
+  })
   if (!period) throw new Error('El período no existe. Cargá al menos un gasto primero.')
 
-  // 2. Asegurar que hay gastos imputados
-  const { data: imputedExpenses } = await supabase
-    .from('iadmin_expenses')
-    .select('id, amount, expense_kind')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('accounting_period_id', period.id)
-    .eq('status', 'imputed')
-  if (!imputedExpenses || imputedExpenses.length === 0) {
+  const imputedExpenses = await listImputedExpensesAmountsByPeriodFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    accountingPeriodId: period.id,
+  })
+  if (imputedExpenses.length === 0) {
     throw new Error('No hay gastos imputados este mes. Cargá al menos uno en la planilla.')
   }
 
   const ordinaryTotal = imputedExpenses
-    .filter((e: any) => (e.expense_kind ?? 'ordinaria') !== 'extraordinaria')
+    .filter((e) => (e.expense_kind ?? 'ordinaria') !== 'extraordinaria')
     .reduce((s, e) => s + Number(e.amount), 0)
   const extraordinaryTotal = imputedExpenses
-    .filter((e: any) => e.expense_kind === 'extraordinaria')
+    .filter((e) => e.expense_kind === 'extraordinaria')
     .reduce((s, e) => s + Number(e.amount), 0)
   const totalExpenses = Math.round((ordinaryTotal + extraordinaryTotal) * 100) / 100
 
-  // 3. Traer unidades activas con alícuota
-  const { data: unitsData } = await supabase
-    .from('iadmin_units')
-    .select('id, code, prorata_coefficient, iadmin_unit_holders(full_name, phone, email, is_active)')
-    .eq('managed_property_id', parsed.propertyId)
-    .eq('is_active', true)
-    .order('code')
-
-  const eligibleUnits = (unitsData ?? []).filter((u: any) => u.prorata_coefficient !== null)
+  const units = await listActiveUnitsWithHoldersForEmitFromPostgres(parsed.propertyId)
+  const eligibleUnits = units.filter((u) => u.prorata_coefficient !== null)
   if (eligibleUnits.length === 0) {
     throw new Error('No hay unidades activas con alícuota definida.')
   }
 
-  // 4. Saldo anterior por unidad
   const previousBalanceByUnit = new Map<string, number>()
-  const { data: priorRuns } = await supabase
-    .from('iadmin_liquidation_runs')
-    .select(`
-      id, accounting_period_id,
-      iadmin_liquidation_items(id, unit_id, ordinary_amount, extraordinary_amount, previous_balance)
-    `)
-    .eq('managed_property_id', parsed.propertyId)
-    .neq('accounting_period_id', period.id)
-    .in('status', ['calculated', 'issued', 'closed'])
-    .order('generated_at', { ascending: false })
-    .limit(1)
-
-  const priorRun = priorRuns?.[0] ?? null
-  if (priorRun) {
-    const priorItems = Array.isArray(priorRun.iadmin_liquidation_items) ? priorRun.iadmin_liquidation_items : []
-    const priorItemIds = priorItems.map((it: any) => it.id)
-    const paidByItem = new Map<string, number>()
-    if (priorItemIds.length > 0) {
-      const { data: priorPayments } = await supabase
-        .from('iadmin_payments')
-        .select('liquidation_item_id, amount')
-        .in('liquidation_item_id', priorItemIds)
-        .eq('is_void', false)
-      for (const p of priorPayments ?? []) {
-        if (!p.liquidation_item_id) continue
-        paidByItem.set(p.liquidation_item_id, (paidByItem.get(p.liquidation_item_id) ?? 0) + Number(p.amount))
-      }
-    }
+  const priorItems = await listPriorRunItemsForEmitFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    excludePeriodId: period.id,
+  })
+  if (priorItems.length > 0) {
+    const itemIds = priorItems.map((it) => it.item_id)
+    const paidByItem = await sumLivePaymentsByItemIdsFromPostgres(itemIds)
     for (const it of priorItems) {
       const sub =
-        Number(it.ordinary_amount ?? 0) + Number(it.extraordinary_amount ?? 0) + Number(it.previous_balance ?? 0)
-      const paid = paidByItem.get(it.id) ?? 0
+        Number(it.ordinary_amount ?? 0) +
+        Number(it.extraordinary_amount ?? 0) +
+        Number(it.previous_balance ?? 0)
+      const paid = paidByItem.get(it.item_id) ?? 0
       const debt = Math.max(0, Math.round((sub - paid) * 100) / 100)
       if (debt > 0) previousBalanceByUnit.set(it.unit_id, debt)
     }
   }
   const totalPreviousBalance = Array.from(previousBalanceByUnit.values()).reduce((s, v) => s + v, 0)
 
-  // 5. Vencimientos por default
   const nextMonth = parsed.month === 12 ? 1 : parsed.month + 1
   const nextYear = parsed.month === 12 ? parsed.year + 1 : parsed.year
   const mm = String(nextMonth).padStart(2, '0')
@@ -510,37 +413,22 @@ export async function emitAndNotify(
     { label: '2do vencimiento', date: `${nextYear}-${mm}-25`, surcharge_pct: 3 },
   ]
 
-  // 6. Crear / actualizar run
-  const { data: run, error: runError } = await supabase
-    .from('iadmin_liquidation_runs')
-    .upsert(
-      {
-        administration_id: property.administration_id,
-        managed_property_id: parsed.propertyId,
-        accounting_period_id: period.id,
-        status: 'issued',
-        total_expenses: totalExpenses,
-        ordinary_total: Math.round(ordinaryTotal * 100) / 100,
-        extraordinary_total: Math.round(extraordinaryTotal * 100) / 100,
-        previous_balance: Math.round(totalPreviousBalance * 100) / 100,
-        due_dates: dueDates,
-        total_units: eligibleUnits.length,
-        generated_by: profile.id,
-        generated_at: new Date().toISOString(),
-        issued_by: profile.id,
-        issued_at: new Date().toISOString(),
-        closed_by: null,
-        closed_at: null,
-      },
-      { onConflict: 'managed_property_id,accounting_period_id' },
-    )
-    .select('id')
-    .single()
-  if (runError) throw new Error(runError.message)
+  const run = await upsertIssuedLiquidationRunInPostgres({
+    administrationId: property.administration_id,
+    managedPropertyId: parsed.propertyId,
+    accountingPeriodId: period.id,
+    totalExpenses,
+    ordinaryTotal: Math.round(ordinaryTotal * 100) / 100,
+    extraordinaryTotal: Math.round(extraordinaryTotal * 100) / 100,
+    previousBalance: Math.round(totalPreviousBalance * 100) / 100,
+    dueDates,
+    totalUnits: eligibleUnits.length,
+    generatedBy: profile.id,
+    issuedBy: profile.id,
+  })
 
-  // 7. Borrar items viejos y re-crear
-  await supabase.from('iadmin_liquidation_items').delete().eq('liquidation_run_id', run.id)
-  const items = eligibleUnits.map((u: any) => {
+  await deleteLiquidationItemsForRunInPostgres(run.id)
+  const itemsToInsert = eligibleUnits.map((u) => {
     const prorata = Number(u.prorata_coefficient)
     const ordinary = Math.round(ordinaryTotal * prorata * 100) / 100
     const extra = Math.round(extraordinaryTotal * prorata * 100) / 100
@@ -555,59 +443,42 @@ export async function emitAndNotify(
       previous_balance: prev,
     }
   })
-  const { error: itemsError } = await supabase.from('iadmin_liquidation_items').insert(items).select('id, unit_id')
-  if (itemsError) throw new Error(itemsError.message)
+  await bulkInsertLiquidationItemsInPostgres(itemsToInsert)
 
-  // 8. Relevar los items ya con su ID para mapear por unit_id
-  const { data: newItems } = await supabase
-    .from('iadmin_liquidation_items')
-    .select('id, unit_id, ordinary_amount, extraordinary_amount, previous_balance')
-    .eq('liquidation_run_id', run.id)
+  const newItems = await listLiquidationItemsByRunFromPostgres(run.id)
+  const itemIds = newItems.map((it) => it.id)
 
-  // 9. Generar share tokens para cada item (revocar existentes)
-  const itemIds = (newItems ?? []).map((it: any) => it.id)
   if (itemIds.length > 0) {
-    await supabase
-      .from('iadmin_item_share_tokens')
-      .update({ revoked_at: new Date().toISOString() })
-      .in('liquidation_item_id', itemIds)
-      .is('revoked_at', null)
-
+    await bulkRevokeShareTokensInPostgres(itemIds)
     const expiresAt = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString()
-    const inserts = itemIds.map((id: string) => ({
-      liquidation_item_id: id,
-      token: randomToken(),
-      expires_at: expiresAt,
-      created_by: profile.id,
-    }))
-    await supabase.from('iadmin_item_share_tokens').insert(inserts)
+    await bulkInsertShareTokensInPostgres(
+      itemIds.map((id) => ({
+        liquidationItemId: id,
+        token: randomToken(),
+        expiresAt,
+        createdBy: profile.id,
+      })),
+    )
   }
 
-  // 10. Armar mensajes por vecino
-  const { data: tokenRows } = await supabase
-    .from('iadmin_item_share_tokens')
-    .select('token, liquidation_item_id')
-    .in('liquidation_item_id', itemIds)
-    .is('revoked_at', null)
+  const tokenRows = await listLiveShareTokensByItemsFromPostgres(itemIds)
   const tokenByItem = new Map<string, string>()
-  for (const t of tokenRows ?? []) tokenByItem.set(t.liquidation_item_id, t.token)
+  for (const t of tokenRows) tokenByItem.set(t.liquidation_item_id, t.token)
 
-  const adminRow = Array.isArray(property.iadmin_administrations) ? property.iadmin_administrations[0] : property.iadmin_administrations
-  const adminLegal = (adminRow?.legal_info ?? {}) as any
-  const building = Array.isArray(property.buildings) ? property.buildings[0] : property.buildings
-  const propertyName = property.display_name ?? building?.name ?? 'Consorcio'
+  const adminLegal = (property.admin_legal_info ?? {}) as any
+  const propertyName = property.display_name ?? property.building_name ?? 'Consorcio'
   const monthLabel = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][parsed.month - 1]
   const periodLabelShort = `${String(parsed.month).padStart(2, '0')}/${parsed.year}`
 
   const base = process.env.NEXT_PUBLIC_APP_BASE_URL ?? ''
 
-  const neighbors: NeighborMessage[] = eligibleUnits.map((u: any) => {
-    const item = (newItems ?? []).find((i: any) => i.unit_id === u.id)
-    const itemId = item?.id as string
-    const holders = Array.isArray(u.iadmin_unit_holders) ? u.iadmin_unit_holders : []
-    const holder = holders.find((h: any) => h?.is_active) ?? holders[0] ?? null
+  const neighbors: NeighborMessage[] = eligibleUnits.map((u) => {
+    const item = newItems.find((i) => i.unit_id === u.id)
+    const itemId = item?.id ?? ''
     const subtotal =
-      Number(item?.ordinary_amount ?? 0) + Number(item?.extraordinary_amount ?? 0) + Number(item?.previous_balance ?? 0)
+      Number(item?.ordinary_amount ?? 0) +
+      Number(item?.extraordinary_amount ?? 0) +
+      Number(item?.previous_balance ?? 0)
     const token = tokenByItem.get(itemId) ?? null
     const shareUrl = token ? `${base}/l/${token}` : null
 
@@ -615,18 +486,18 @@ export async function emitAndNotify(
       ? `\nPara transferir: CBU ${adminLegal.bank.cbu}${adminLegal.bank.alias ? ` · Alias ${adminLegal.bank.alias}` : ''}`
       : ''
 
-    const message = `Hola ${holder?.full_name ?? 'vecino/a'}! Ya está la liquidación de ${monthLabel} de ${propertyName}. Tu unidad ${u.code} debe pagar ${formatARS(subtotal)} con vencimiento el ${dueDates[0].date}.${bankLine}${shareUrl ? `\nDetalle: ${shareUrl}` : ''}`
+    const message = `Hola ${u.holder_name ?? 'vecino/a'}! Ya está la liquidación de ${monthLabel} de ${propertyName}. Tu unidad ${u.code} debe pagar ${formatARS(subtotal)} con vencimiento el ${dueDates[0].date}.${bankLine}${shareUrl ? `\nDetalle: ${shareUrl}` : ''}`
 
-    const phone = (holder?.phone ?? '').replace(/[^\d+]/g, '')
+    const phone = (u.holder_phone ?? '').replace(/[^\d+]/g, '')
     const whatsappBase = phone ? `https://wa.me/${phone.startsWith('+') ? phone.slice(1) : phone}` : 'https://wa.me'
     const whatsappHref = `${whatsappBase}?text=${encodeURIComponent(message)}`
 
     return {
       itemId,
       unitCode: u.code,
-      holderName: holder?.full_name ?? null,
-      holderPhone: holder?.phone ?? null,
-      holderEmail: holder?.email ?? null,
+      holderName: u.holder_name,
+      holderPhone: u.holder_phone,
+      holderEmail: u.holder_email,
       amountToPay: Math.round(subtotal * 100) / 100,
       subtotal: Math.round(subtotal * 100) / 100,
       message,
@@ -635,11 +506,11 @@ export async function emitAndNotify(
     }
   })
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: property.administration_id,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_liquidation_runs',
-    entity_id: run.id,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: property.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_liquidation_runs',
+    entityId: run.id,
     action: 'liquidation.emitted_from_planilla',
     metadata: { period: periodLabelShort, neighbors: neighbors.length, total: totalExpenses },
   })
@@ -648,16 +519,12 @@ export async function emitAndNotify(
   revalidatePath(`/iadmin/liquidaciones/${run.id}`)
 
   return {
-    runId: run.id as string,
+    runId: run.id,
     periodLabel: periodLabelShort,
     liquidated: totalExpenses,
     neighbors,
   }
 }
-
-// ----------------------------------------------------------------------------
-// getUnitStatement: estado de cuenta del vecino para el drawer
-// ----------------------------------------------------------------------------
 
 const statementSchema = z.object({
   propertyId: z.string().uuid(),
@@ -669,20 +536,13 @@ export async function getUnitStatement(
   input: z.input<typeof statementSchema>,
 ): Promise<IAdminUnitAccountStatement> {
   const parsed = statementSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  // Resolver administrationId para chequear capability
-  const { data: prop } = await supabase
-    .from('iadmin_managed_properties')
-    .select('administration_id')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
-  if (!prop?.administration_id) throw new Error('Consorcio no encontrado')
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
 
   await requireIAdmin({
     capability: 'collections.view',
-    administrationId: prop.administration_id as string,
+    administrationId: property.administration_id,
   })
 
   const statement = await getIAdminUnitAccountStatement(parsed.propertyId, parsed.unitId, {

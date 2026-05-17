@@ -3,7 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  getLiquidationItemRunFromPostgres,
+  insertShareTokenInPostgres,
+  revokeLiveShareTokensInPostgres,
+} from '@/lib/db/iadmin-writes'
 
 const createShareTokenSchema = z.object({
   liquidationItemId: z.string().uuid(),
@@ -17,7 +22,6 @@ export type CreateShareTokenResult = {
 }
 
 function randomToken(): string {
-  // 24 chars base64url-ish sin padding
   const bytes = new Uint8Array(18)
   crypto.getRandomValues(bytes)
   return Buffer.from(bytes)
@@ -31,53 +35,38 @@ export async function createLiquidationItemShareToken(
   input: z.input<typeof createShareTokenSchema>,
 ): Promise<CreateShareTokenResult> {
   const parsed = createShareTokenSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: item } = await supabase
-    .from('iadmin_liquidation_items')
-    .select('id, liquidation_run_id, iadmin_liquidation_runs!inner(administration_id, managed_property_id)')
-    .eq('id', parsed.liquidationItemId)
-    .maybeSingle()
+  const item = await getLiquidationItemRunFromPostgres(parsed.liquidationItemId)
   if (!item) throw new Error('Item de liquidacion no encontrado')
-  const run = Array.isArray(item.iadmin_liquidation_runs) ? item.iadmin_liquidation_runs[0] : item.iadmin_liquidation_runs
-  const administrationId = run?.administration_id as string
 
   const { profile } = await requireIAdmin({
     capability: 'liquidations.share',
-    administrationId,
+    administrationId: item.administration_id,
   })
 
-  // Revocar tokens anteriores vivos (solo 1 activo por item)
-  await supabase
-    .from('iadmin_item_share_tokens')
-    .update({ revoked_at: new Date().toISOString() })
-    .eq('liquidation_item_id', parsed.liquidationItemId)
-    .is('revoked_at', null)
+  await revokeLiveShareTokensInPostgres(parsed.liquidationItemId)
 
   const token = randomToken()
   const expiresAt = new Date(Date.now() + parsed.expiresInDays * 24 * 60 * 60 * 1000).toISOString()
 
-  const { error } = await supabase.from('iadmin_item_share_tokens').insert({
-    liquidation_item_id: parsed.liquidationItemId,
+  await insertShareTokenInPostgres({
+    liquidationItemId: parsed.liquidationItemId,
     token,
-    expires_at: expiresAt,
-    created_by: profile.id,
+    expiresAt,
+    createdBy: profile.id,
   })
 
-  if (error) throw new Error(error.message)
-
-  const base = process.env.NEXT_PUBLIC_APP_BASE_URL ?? ''
-  const url = `${base}/l/${token}`
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_liquidation_items',
-    entity_id: parsed.liquidationItemId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: item.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_liquidation_items',
+    entityId: parsed.liquidationItemId,
     action: 'share_token.created',
     metadata: { expires_at: expiresAt },
   })
+
+  const base = process.env.NEXT_PUBLIC_APP_BASE_URL ?? ''
+  const url = `${base}/l/${token}`
 
   revalidatePath(`/iadmin/liquidaciones/${item.liquidation_run_id}`)
 

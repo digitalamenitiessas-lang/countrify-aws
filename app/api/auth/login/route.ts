@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     const profile = await findProfileByEmail(email)
     if (!profile) {
       return NextResponse.json(
-        { error: 'La cuenta existe en Cognito, pero todavia no tiene perfil Countrify en AWS.' },
+        { error: 'La cuenta existe en Cognito, pero todavia no tiene perfil CITIFY en AWS.' },
         { status: 403 },
       )
     }

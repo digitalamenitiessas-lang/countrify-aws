@@ -7,14 +7,11 @@ import { BrandsCarousel } from '@/components/home/brands-carousel'
 import { SiteFooter } from '@/components/home/site-footer'
 import { getCurrentProfile } from '@/lib/auth'
 import { ROLE_HOME } from '@/lib/constants'
-import { isSupabaseConfigured } from '@/lib/supabase/env'
 
 export default async function HomePage() {
-  if (isSupabaseConfigured()) {
-    const profile = await getCurrentProfile()
-    if (profile?.role) {
-      redirect(ROLE_HOME[profile.role])
-    }
+  const profile = await getCurrentProfile()
+  if (profile?.role) {
+    redirect(ROLE_HOME[profile.role])
   }
 
   return (
