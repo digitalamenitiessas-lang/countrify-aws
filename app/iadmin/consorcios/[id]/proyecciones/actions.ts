@@ -3,7 +3,14 @@
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { runAIChat, stripJsonFences } from '@/lib/iadmin/ai-chat'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import {
+  getManagedPropertyForProjectionFromPostgres,
+  listActivePaymentsForProjectionFromPostgres,
+  listCashAccountsByPropertyFromPostgres,
+  listImputedExpensesForProjectionFromPostgres,
+  listIssuedLiquidationRunsForProjectionFromPostgres,
+  sumBankMovementsForAccountsFromPostgres,
+} from '@/lib/db/iadmin-writes'
 
 const schema = z.object({
   propertyId: z.string().uuid(),
@@ -75,80 +82,32 @@ Reglas:
 
 export async function generateProjection(input: GenerateProjectionInput): Promise<ProjectionResult> {
   const parsed = schema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: property } = await supabase
-    .from('iadmin_managed_properties')
-    .select('id, administration_id, display_name, management_fee_pct, buildings(name, total_units)')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
+  const property = await getManagedPropertyForProjectionFromPostgres(parsed.propertyId)
   if (!property) throw new Error('Consorcio no encontrado')
 
-  const { context } = await requireIAdmin({
+  await requireIAdmin({
     capability: 'reports.view',
     administrationId: property.administration_id,
   })
-  void context
 
-  const building = property.buildings
-    ? Array.isArray(property.buildings)
-      ? property.buildings[0]
-      : property.buildings
-    : null
-  const propertyName = property.display_name ?? building?.name ?? 'Consorcio'
-  const totalUnits = building?.total_units ?? 0
+  const propertyName = property.display_name ?? property.building_name ?? 'Consorcio'
+  const totalUnits = property.total_units ?? 0
 
-  // Stats de los últimos 6 meses
   const sixMonthsAgo = new Date()
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6)
   const fromDate = sixMonthsAgo.toISOString().slice(0, 10)
 
-  const [expensesRes, cashRes, runsRes, paymentsRes] = await Promise.all([
-    supabase
-      .from('iadmin_expenses')
-      .select('amount, category, expense_kind, issued_at, status, iadmin_providers(name)')
-      .eq('managed_property_id', parsed.propertyId)
-      .gte('issued_at', fromDate)
-      .in('status', ['imputed', 'approved'])
-      .order('issued_at', { ascending: true }),
-    supabase
-      .from('iadmin_cash_accounts')
-      .select('id, name, kind, is_active')
-      .eq('managed_property_id', parsed.propertyId),
-    supabase
-      .from('iadmin_liquidation_runs')
-      .select('id, ordinary_total, extraordinary_total, iadmin_accounting_periods(period_year, period_month)')
-      .eq('managed_property_id', parsed.propertyId)
-      .in('status', ['issued', 'closed'])
-      .order('generated_at', { ascending: false })
-      .limit(6),
-    supabase
-      .from('iadmin_payments')
-      .select('amount, is_void, liquidation_run_id')
-      .eq('managed_property_id', parsed.propertyId)
-      .eq('is_void', false),
+  const [expenses, cashAccounts, runs, payments] = await Promise.all([
+    listImputedExpensesForProjectionFromPostgres({ managedPropertyId: parsed.propertyId, fromDate }),
+    listCashAccountsByPropertyFromPostgres(parsed.propertyId),
+    listIssuedLiquidationRunsForProjectionFromPostgres({ managedPropertyId: parsed.propertyId, limit: 6 }),
+    listActivePaymentsForProjectionFromPostgres(parsed.propertyId),
   ])
 
-  const expenses = expensesRes.data ?? []
-  const cashAccounts = cashRes.data ?? []
-  const runs = runsRes.data ?? []
-  const payments = paymentsRes.data ?? []
+  const activeAccountIds = cashAccounts.filter((a) => a.is_active).map((a) => a.id)
+  const currentBalance = await sumBankMovementsForAccountsFromPostgres(activeAccountIds)
 
-  // Saldo de cuentas activas (sumando movimientos)
-  let currentBalance = 0
-  if (cashAccounts.length > 0) {
-    const activeIds = cashAccounts.filter((a) => a.is_active).map((a) => a.id)
-    if (activeIds.length > 0) {
-      const { data: moves } = await supabase
-        .from('iadmin_bank_movements')
-        .select('cash_account_id, amount')
-        .in('cash_account_id', activeIds)
-      currentBalance = (moves ?? []).reduce((s, m) => s + Number(m.amount), 0)
-    }
-  }
-
-  // Tasa de cobranza histórica
   const totalLiquidated = runs.reduce(
     (s, r) => s + Number(r.ordinary_total ?? 0) + Number(r.extraordinary_total ?? 0),
     0,
@@ -161,11 +120,10 @@ export async function generateProjection(input: GenerateProjectionInput): Promis
   const totalCollected = Array.from(collectedByRun.values()).reduce((s, v) => s + v, 0)
   const historicalRatePct = totalLiquidated > 0 ? Math.round((totalCollected / totalLiquidated) * 100) : null
 
-  // Agregar gastos por mes para armar input
   const monthlyBuckets = new Map<string, { total: number; byCategory: Record<string, number> }>()
   for (const e of expenses) {
     if (!e.issued_at) continue
-    const key = e.issued_at.slice(0, 7) // YYYY-MM
+    const key = e.issued_at.slice(0, 7)
     const bucket = monthlyBuckets.get(key) ?? { total: 0, byCategory: {} }
     bucket.total += Number(e.amount)
     const cat = e.category ?? 'Otros'
@@ -173,16 +131,13 @@ export async function generateProjection(input: GenerateProjectionInput): Promis
     monthlyBuckets.set(key, bucket)
   }
 
-  // Ultimos 3 meses con categorias detalladas como input para la IA
   const monthlyHistory = Array.from(monthlyBuckets.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
     .slice(-6)
     .map(([month, b]) => ({
       month,
       total: Math.round(b.total),
-      by_category: Object.fromEntries(
-        Object.entries(b.byCategory).map(([k, v]) => [k, Math.round(v)]),
-      ),
+      by_category: Object.fromEntries(Object.entries(b.byCategory).map(([k, v]) => [k, Math.round(v)])),
     }))
 
   const now = new Date()
@@ -192,21 +147,19 @@ export async function generateProjection(input: GenerateProjectionInput): Promis
   const contextJson = {
     property: propertyName,
     total_units: totalUnits,
-    management_fee_pct: property.management_fee_pct,
+    management_fee_pct: property.management_fee_pct !== null ? Number(property.management_fee_pct) : null,
     current_balance: Math.round(currentBalance),
     historical_collection_rate_pct: historicalRatePct,
     next_period_label: nextLabel,
     last_6_months: monthlyHistory,
-    last_runs: runs.map((r) => {
-      const p = Array.isArray(r.iadmin_accounting_periods)
-        ? r.iadmin_accounting_periods[0]
-        : r.iadmin_accounting_periods
-      return {
-        period: p ? `${String(p.period_month).padStart(2, '0')}/${p.period_year}` : '—',
-        ordinary: Math.round(Number(r.ordinary_total ?? 0)),
-        extraordinary: Math.round(Number(r.extraordinary_total ?? 0)),
-      }
-    }),
+    last_runs: runs.map((r) => ({
+      period:
+        r.period_year && r.period_month
+          ? `${String(r.period_month).padStart(2, '0')}/${r.period_year}`
+          : '—',
+      ordinary: Math.round(Number(r.ordinary_total ?? 0)),
+      extraordinary: Math.round(Number(r.extraordinary_total ?? 0)),
+    })),
   }
 
   const userPrompt = `Datos del consorcio (JSON):\n${JSON.stringify(contextJson, null, 2)}\n\nProyectá el período ${nextLabel} con estos datos.`

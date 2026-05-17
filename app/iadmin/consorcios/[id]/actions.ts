@@ -4,23 +4,39 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import type { UnitProfileRelationship, UserRole } from '@/lib/types'
-import { getSupabaseAdminClient } from '@/lib/supabase/admin'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
-
-async function getPropertyAdminId(propertyId: string) {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-  const { data } = await supabase
-    .from('iadmin_managed_properties')
-    .select('id, administration_id')
-    .eq('id', propertyId)
-    .maybeSingle()
-  if (!data) throw new Error('Consorcio no encontrado')
-  return { supabase, administrationId: data.administration_id as string }
-}
+import { adminCreateCognitoUser } from '@/lib/aws/cognito'
+import { findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  changeAccountingPeriodStatusInPostgres,
+  closeActiveHoldersOfKindInPostgres,
+  deactivateActivePrincipalMembershipsInPostgres,
+  deactivateBuildingInformationInPostgres,
+  deactivateMembershipByIdInPostgres,
+  deactivateUnitInPostgres,
+  endHolderInPostgres,
+  findOwnerHolderForProfileFromPostgres,
+  findUnitProfileMembershipFromPostgres,
+  getAccountingPeriodWithAdminFromPostgres,
+  getBuildingIdForPropertyFromPostgres,
+  getHolderWithAdminFromPostgres,
+  getManagedPropertyAdminIdFromPostgres,
+  getMembershipWithAdminFromPostgres,
+  getUnitFullScopeFromPostgres,
+  getUnitWithAdminFromPostgres,
+  insertBuildingInformationInPostgres,
+  insertOwnerHolderInPostgres,
+  insertUnitFromCrudInPostgres,
+  insertUnitHolderFromCrudInPostgres,
+  updateManagedPropertyInPostgres,
+  updatePropertyLegalInfoInPostgres,
+  updateUnitInPostgres,
+  upsertAccountingPeriodOpenInPostgres,
+  upsertUnitProfileMembershipInPostgres,
+} from '@/lib/db/iadmin-writes'
 
 // ----------------------------------------------------------------------------
-// Managed property (edicion datos del consorcio)
+// Managed property
 // ----------------------------------------------------------------------------
 
 const updatePropertySchema = z.object({
@@ -35,13 +51,16 @@ const updatePropertySchema = z.object({
 
 export async function updateManagedProperty(input: z.input<typeof updatePropertySchema>) {
   const parsed = updatePropertySchema.parse(input)
-  const { supabase, administrationId } = await getPropertyAdminId(parsed.propertyId)
+
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
+
   const { profile } = await requireIAdmin({
     capability: 'consorcio.edit',
-    administrationId,
+    administrationId: property.administration_id,
   })
 
-  const patch: Record<string, unknown> = {}
+  const patch: Parameters<typeof updateManagedPropertyInPostgres>[1] = {}
   if (parsed.displayName !== undefined) patch.display_name = parsed.displayName
   if (parsed.taxId !== undefined) patch.tax_id = parsed.taxId
   if (parsed.managementFeePct !== undefined) patch.management_fee_pct = parsed.managementFeePct
@@ -51,16 +70,15 @@ export async function updateManagedProperty(input: z.input<typeof updateProperty
 
   if (Object.keys(patch).length === 0) return
 
-  const { error } = await supabase.from('iadmin_managed_properties').update(patch).eq('id', parsed.propertyId)
-  if (error) throw new Error(error.message)
+  await updateManagedPropertyInPostgres(parsed.propertyId, patch)
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_managed_properties',
-    entity_id: parsed.propertyId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: property.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_managed_properties',
+    entityId: parsed.propertyId,
     action: 'property.updated',
-    metadata: patch,
+    metadata: patch as Record<string, unknown>,
   })
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
@@ -68,7 +86,7 @@ export async function updateManagedProperty(input: z.input<typeof updateProperty
 }
 
 // ----------------------------------------------------------------------------
-// Datos legales del consorcio (banco, seguros, horarios, amenities, notas)
+// Datos legales
 // ----------------------------------------------------------------------------
 
 const legalInfoSchema = z.object({
@@ -116,24 +134,25 @@ const updatePropertyLegalSchema = z.object({
 
 export async function updatePropertyLegalInfo(input: z.input<typeof updatePropertyLegalSchema>) {
   const parsed = updatePropertyLegalSchema.parse(input)
-  const { supabase, administrationId } = await getPropertyAdminId(parsed.propertyId)
+
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
+
   const { profile } = await requireIAdmin({
     capability: 'consorcio.legal.edit',
-    administrationId,
+    administrationId: property.administration_id,
   })
 
-  const { error } = await supabase
-    .from('iadmin_managed_properties')
-    .update({ legal_info: parsed.legalInfo })
-    .eq('id', parsed.propertyId)
+  await updatePropertyLegalInfoInPostgres({
+    propertyId: parsed.propertyId,
+    legalInfo: parsed.legalInfo as Record<string, unknown>,
+  })
 
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_managed_properties',
-    entity_id: parsed.propertyId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: property.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_managed_properties',
+    entityId: parsed.propertyId,
     action: 'property.legal_updated',
   })
 
@@ -158,39 +177,35 @@ const createUnitSchema = unitFields.extend({
 
 export async function createUnit(input: z.input<typeof createUnitSchema>) {
   const parsed = createUnitSchema.parse(input)
-  const { supabase, administrationId } = await getPropertyAdminId(parsed.propertyId)
+
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
+
   const { profile } = await requireIAdmin({
     capability: 'units.manage',
-    administrationId,
+    administrationId: property.administration_id,
   })
 
-  const { data, error } = await supabase
-    .from('iadmin_units')
-    .insert({
-      managed_property_id: parsed.propertyId,
-      code: parsed.code,
-      kind: parsed.kind,
-      floor: parsed.floor ?? null,
-      surface_m2: parsed.surfaceM2 ?? null,
-      prorata_coefficient: parsed.prorataCoefficient ?? null,
-      is_active: true,
-    })
-    .select('id')
-    .single()
+  const { id } = await insertUnitFromCrudInPostgres({
+    managedPropertyId: parsed.propertyId,
+    code: parsed.code,
+    kind: parsed.kind,
+    floor: parsed.floor ?? null,
+    surfaceM2: parsed.surfaceM2 ?? null,
+    prorataCoefficient: parsed.prorataCoefficient ?? null,
+  })
 
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_units',
-    entity_id: data.id,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: property.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_units',
+    entityId: id,
     action: 'unit.created',
     metadata: { code: parsed.code },
   })
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
-  return { id: data.id as string }
+  return { id }
 }
 
 const updateUnitSchema = unitFields.partial().extend({
@@ -199,24 +214,16 @@ const updateUnitSchema = unitFields.partial().extend({
 
 export async function updateUnit(input: z.input<typeof updateUnitSchema>) {
   const parsed = updateUnitSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: unit } = await supabase
-    .from('iadmin_units')
-    .select('id, managed_property_id, iadmin_managed_properties!inner(administration_id)')
-    .eq('id', parsed.unitId)
-    .maybeSingle()
+  const unit = await getUnitWithAdminFromPostgres(parsed.unitId)
   if (!unit) throw new Error('Unidad no encontrada')
 
-  const propertyRel = Array.isArray(unit.iadmin_managed_properties)
-    ? unit.iadmin_managed_properties[0]
-    : unit.iadmin_managed_properties
-  const administrationId = propertyRel?.administration_id as string
+  const { profile } = await requireIAdmin({
+    capability: 'units.manage',
+    administrationId: unit.administration_id,
+  })
 
-  const { profile } = await requireIAdmin({ capability: 'units.manage', administrationId })
-
-  const patch: Record<string, unknown> = {}
+  const patch: Parameters<typeof updateUnitInPostgres>[1] = {}
   if (parsed.code !== undefined) patch.code = parsed.code
   if (parsed.kind !== undefined) patch.kind = parsed.kind
   if (parsed.floor !== undefined) patch.floor = parsed.floor
@@ -224,16 +231,15 @@ export async function updateUnit(input: z.input<typeof updateUnitSchema>) {
   if (parsed.prorataCoefficient !== undefined) patch.prorata_coefficient = parsed.prorataCoefficient
   if (Object.keys(patch).length === 0) return
 
-  const { error } = await supabase.from('iadmin_units').update(patch).eq('id', parsed.unitId)
-  if (error) throw new Error(error.message)
+  await updateUnitInPostgres(parsed.unitId, patch)
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_units',
-    entity_id: parsed.unitId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: unit.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_units',
+    entityId: parsed.unitId,
     action: 'unit.updated',
-    metadata: patch,
+    metadata: patch as Record<string, unknown>,
   })
 
   revalidatePath(`/iadmin/consorcios/${unit.managed_property_id}`)
@@ -243,31 +249,22 @@ const deactivateUnitSchema = z.object({ unitId: z.string().uuid() })
 
 export async function deactivateUnit(input: z.input<typeof deactivateUnitSchema>) {
   const parsed = deactivateUnitSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: unit } = await supabase
-    .from('iadmin_units')
-    .select('id, managed_property_id, iadmin_managed_properties!inner(administration_id)')
-    .eq('id', parsed.unitId)
-    .maybeSingle()
+  const unit = await getUnitWithAdminFromPostgres(parsed.unitId)
   if (!unit) throw new Error('Unidad no encontrada')
 
-  const propertyRel = Array.isArray(unit.iadmin_managed_properties)
-    ? unit.iadmin_managed_properties[0]
-    : unit.iadmin_managed_properties
-  const administrationId = propertyRel?.administration_id as string
+  const { profile } = await requireIAdmin({
+    capability: 'units.manage',
+    administrationId: unit.administration_id,
+  })
 
-  const { profile } = await requireIAdmin({ capability: 'units.manage', administrationId })
+  await deactivateUnitInPostgres(parsed.unitId)
 
-  const { error } = await supabase.from('iadmin_units').update({ is_active: false }).eq('id', parsed.unitId)
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_units',
-    entity_id: parsed.unitId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: unit.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_units',
+    entityId: parsed.unitId,
     action: 'unit.deactivated',
   })
 
@@ -291,61 +288,43 @@ const createHolderSchema = z.object({
 
 export async function createUnitHolder(input: z.input<typeof createHolderSchema>) {
   const parsed = createHolderSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: unit } = await supabase
-    .from('iadmin_units')
-    .select('id, managed_property_id, iadmin_managed_properties!inner(administration_id)')
-    .eq('id', parsed.unitId)
-    .maybeSingle()
+  const unit = await getUnitWithAdminFromPostgres(parsed.unitId)
   if (!unit) throw new Error('Unidad no encontrada')
 
-  const propertyRel = Array.isArray(unit.iadmin_managed_properties)
-    ? unit.iadmin_managed_properties[0]
-    : unit.iadmin_managed_properties
-  const administrationId = propertyRel?.administration_id as string
+  const { profile } = await requireIAdmin({
+    capability: 'holders.manage',
+    administrationId: unit.administration_id,
+  })
 
-  const { profile } = await requireIAdmin({ capability: 'holders.manage', administrationId })
-
-  // Si pidio reemplazar al activo del mismo kind, lo cerramos primero
   if (parsed.replaceActive) {
-    await supabase
-      .from('iadmin_unit_holders')
-      .update({ is_active: false, end_date: new Date().toISOString().slice(0, 10) })
-      .eq('unit_id', parsed.unitId)
-      .eq('holder_kind', parsed.holderKind)
-      .eq('is_active', true)
+    await closeActiveHoldersOfKindInPostgres({
+      unitId: parsed.unitId,
+      holderKind: parsed.holderKind,
+    })
   }
 
-  const { data, error } = await supabase
-    .from('iadmin_unit_holders')
-    .insert({
-      unit_id: parsed.unitId,
-      full_name: parsed.fullName,
-      holder_kind: parsed.holderKind,
-      tax_id: parsed.taxId ?? null,
-      email: parsed.email ?? null,
-      phone: parsed.phone ?? null,
-      start_date: parsed.startDate ?? null,
-      is_active: true,
-    })
-    .select('id')
-    .single()
+  const { id } = await insertUnitHolderFromCrudInPostgres({
+    unitId: parsed.unitId,
+    fullName: parsed.fullName,
+    holderKind: parsed.holderKind,
+    taxId: parsed.taxId ?? null,
+    email: parsed.email ?? null,
+    phone: parsed.phone ?? null,
+    startDate: parsed.startDate ?? null,
+  })
 
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_unit_holders',
-    entity_id: data.id,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: unit.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_unit_holders',
+    entityId: id,
     action: 'holder.created',
     metadata: { full_name: parsed.fullName, holder_kind: parsed.holderKind },
   })
 
   revalidatePath(`/iadmin/consorcios/${unit.managed_property_id}`)
-  return { id: data.id as string }
+  return { id }
 }
 
 const endHolderSchema = z.object({
@@ -355,85 +334,34 @@ const endHolderSchema = z.object({
 
 export async function endUnitHolder(input: z.input<typeof endHolderSchema>) {
   const parsed = endHolderSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: holder } = await supabase
-    .from('iadmin_unit_holders')
-    .select('id, unit_id, iadmin_units!inner(managed_property_id, iadmin_managed_properties!inner(administration_id))')
-    .eq('id', parsed.holderId)
-    .maybeSingle()
+  const holder = await getHolderWithAdminFromPostgres(parsed.holderId)
   if (!holder) throw new Error('Titular no encontrado')
 
-  const unitRel = Array.isArray(holder.iadmin_units) ? holder.iadmin_units[0] : holder.iadmin_units
-  const propRel = unitRel?.iadmin_managed_properties
-    ? Array.isArray(unitRel.iadmin_managed_properties)
-      ? unitRel.iadmin_managed_properties[0]
-      : unitRel.iadmin_managed_properties
-    : null
-  const administrationId = propRel?.administration_id as string
-  const propertyId = unitRel?.managed_property_id as string
+  const { profile } = await requireIAdmin({
+    capability: 'holders.manage',
+    administrationId: holder.administration_id,
+  })
 
-  const { profile } = await requireIAdmin({ capability: 'holders.manage', administrationId })
+  await endHolderInPostgres({
+    holderId: parsed.holderId,
+    endDate: parsed.endDate ?? new Date().toISOString().slice(0, 10),
+  })
 
-  const { error } = await supabase
-    .from('iadmin_unit_holders')
-    .update({
-      is_active: false,
-      end_date: parsed.endDate ?? new Date().toISOString().slice(0, 10),
-    })
-    .eq('id', parsed.holderId)
-
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_unit_holders',
-    entity_id: parsed.holderId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: holder.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_unit_holders',
+    entityId: parsed.holderId,
     action: 'holder.closed',
   })
 
-  revalidatePath(`/iadmin/consorcios/${propertyId}`)
+  revalidatePath(`/iadmin/consorcios/${holder.managed_property_id}`)
 }
 
 // ----------------------------------------------------------------------------
-// Usuarios Countrify vinculados a unidades
+// Usuarios CITIFY vinculados a unidades
 // ----------------------------------------------------------------------------
-
-async function getUnitScope(unitId: string) {
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-
-  const { data: unit } = await supabase
-    .from('iadmin_units')
-    .select(`
-      id,
-      code,
-      managed_property_id,
-      iadmin_managed_properties!inner (
-        administration_id,
-        building_id
-      )
-    `)
-    .eq('id', unitId)
-    .maybeSingle()
-
-  if (!unit) throw new Error('Unidad no encontrada')
-
-  const property = Array.isArray(unit.iadmin_managed_properties)
-    ? unit.iadmin_managed_properties[0]
-    : unit.iadmin_managed_properties
-
-  return {
-    supabase,
-    unitId: unit.id as string,
-    unitCode: unit.code as string,
-    propertyId: unit.managed_property_id as string,
-    administrationId: property.administration_id as string,
-    buildingId: property.building_id as string,
-  }
-}
 
 const createUnitUserSchema = z.object({
   unitId: z.string().uuid(),
@@ -450,73 +378,64 @@ function roleForRelationship(relationshipType: UnitProfileRelationship): UserRol
 }
 
 function avatarFromName(fullName: string) {
-  return fullName
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0]?.toUpperCase())
-    .join('') || 'U'
+  return (
+    fullName
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'U'
+  )
 }
 
-async function findOrCreateAuthProfile(input: {
+async function ensureProfileForUnit(input: {
   fullName: string
   email: string
   phone: string | null
   password: string
   role: UserRole
   buildingId: string
-}) {
-  const admin = getSupabaseAdminClient()
-  if (!admin) {
-    throw new Error('Falta SUPABASE_SERVICE_ROLE_KEY para crear usuarios desde el panel.')
-  }
-
+}): Promise<string> {
   const normalizedEmail = input.email.toLowerCase()
-  const { data: existingProfile } = await admin
-    .from('profiles')
-    .select('id')
-    .eq('email', normalizedEmail)
-    .maybeSingle()
+  const existing = await findProfileByEmail(normalizedEmail)
 
-  let profileId = existingProfile?.id as string | undefined
-
+  let profileId = existing?.id
   if (!profileId) {
-    const { data: createdUser, error: createError } = await admin.auth.admin.createUser({
+    const { sub } = await adminCreateCognitoUser({
       email: normalizedEmail,
       password: input.password,
-      email_confirm: true,
-      user_metadata: { full_name: input.fullName },
+      fullName: input.fullName,
     })
-    if (createError || !createdUser.user) {
-      throw new Error(createError?.message ?? 'No se pudo crear el usuario.')
-    }
-    profileId = createdUser.user.id
+    profileId = sub
   }
 
-  const { error: profileError } = await admin.from('profiles').upsert({
+  await upsertProfile({
     id: profileId,
     email: normalizedEmail,
-    full_name: input.fullName,
-    avatar_text: avatarFromName(input.fullName),
-    phone: input.phone,
+    fullName: input.fullName,
+    avatarText: avatarFromName(input.fullName),
     role: input.role,
-    building_id: input.buildingId,
+    phone: input.phone,
+    buildingId: input.buildingId,
+    businessId: null,
   })
-  if (profileError) throw new Error(profileError.message)
 
   return profileId
 }
 
 export async function createUnitUser(input: z.input<typeof createUnitUserSchema>) {
   const parsed = createUnitUserSchema.parse(input)
-  const scope = await getUnitScope(parsed.unitId)
+
+  const scope = await getUnitFullScopeFromPostgres(parsed.unitId)
+  if (!scope) throw new Error('Unidad no encontrada')
+
   const { profile } = await requireIAdmin({
     capability: 'holders.manage',
     administrationId: scope.administrationId,
   })
 
   const role = roleForRelationship(parsed.relationshipType)
-  const targetProfileId = await findOrCreateAuthProfile({
+  const targetProfileId = await ensureProfileForUnit({
     fullName: parsed.fullName,
     email: parsed.email,
     phone: parsed.phone ?? null,
@@ -526,65 +445,46 @@ export async function createUnitUser(input: z.input<typeof createUnitUserSchema>
   })
 
   if (parsed.relationshipType === 'vecino_principal') {
-    await scope.supabase
-      .from('unit_profile_memberships')
-      .update({ active: false })
-      .eq('unit_id', scope.unitId)
-      .eq('relationship_type', 'vecino_principal')
-      .eq('active', true)
+    await deactivateActivePrincipalMembershipsInPostgres(scope.unitId)
   }
 
-  const { data: existingMembership } = await scope.supabase
-    .from('unit_profile_memberships')
-    .select('id')
-    .eq('unit_id', scope.unitId)
-    .eq('profile_id', targetProfileId)
-    .eq('relationship_type', parsed.relationshipType)
-    .maybeSingle()
+  const existingMembership = await findUnitProfileMembershipFromPostgres({
+    unitId: scope.unitId,
+    profileId: targetProfileId,
+    relationshipType: parsed.relationshipType,
+  })
 
-  const membershipPayload = {
-    unit_id: scope.unitId,
-    building_id: scope.buildingId,
-    profile_id: targetProfileId,
-    relationship_type: parsed.relationshipType,
-    is_primary: parsed.relationshipType === 'propietario' ? parsed.isPrimaryOwner : false,
-    active: true,
-    created_by_profile_id: profile.id,
-  }
-
-  const { error } = existingMembership
-    ? await scope.supabase.from('unit_profile_memberships').update(membershipPayload).eq('id', existingMembership.id)
-    : await scope.supabase.from('unit_profile_memberships').insert(membershipPayload)
-
-  if (error) throw new Error(error.message)
+  await upsertUnitProfileMembershipInPostgres({
+    membershipId: existingMembership?.id ?? null,
+    unitId: scope.unitId,
+    buildingId: scope.buildingId,
+    profileId: targetProfileId,
+    relationshipType: parsed.relationshipType,
+    isPrimary: parsed.relationshipType === 'propietario' ? parsed.isPrimaryOwner : false,
+    createdByProfileId: profile.id,
+  })
 
   if (parsed.relationshipType === 'propietario') {
-    const { data: existingHolder } = await scope.supabase
-      .from('iadmin_unit_holders')
-      .select('id')
-      .eq('unit_id', scope.unitId)
-      .eq('profile_id', targetProfileId)
-      .eq('holder_kind', 'propietario')
-      .maybeSingle()
-
+    const existingHolder = await findOwnerHolderForProfileFromPostgres({
+      unitId: scope.unitId,
+      profileId: targetProfileId,
+    })
     if (!existingHolder) {
-      await scope.supabase.from('iadmin_unit_holders').insert({
-        unit_id: scope.unitId,
-        profile_id: targetProfileId,
-        full_name: parsed.fullName,
-        holder_kind: 'propietario',
+      await insertOwnerHolderInPostgres({
+        unitId: scope.unitId,
+        profileId: targetProfileId,
+        fullName: parsed.fullName,
         email: parsed.email.toLowerCase(),
         phone: parsed.phone ?? null,
-        is_active: true,
       })
     }
   }
 
-  await scope.supabase.from('iadmin_audit_logs').insert({
-    administration_id: scope.administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'unit_profile_memberships',
-    entity_id: scope.unitId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: scope.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'unit_profile_memberships',
+    entityId: scope.unitId,
     action: 'unit_user.created',
     metadata: {
       unit_code: scope.unitCode,
@@ -593,7 +493,7 @@ export async function createUnitUser(input: z.input<typeof createUnitUserSchema>
     },
   })
 
-  revalidatePath(`/iadmin/consorcios/${scope.propertyId}`)
+  revalidatePath(`/iadmin/consorcios/${scope.managedPropertyId}`)
   return { profileId: targetProfileId }
 }
 
@@ -603,55 +503,30 @@ const deactivateUnitMembershipSchema = z.object({
 
 export async function deactivateUnitMembership(input: z.input<typeof deactivateUnitMembershipSchema>) {
   const parsed = deactivateUnitMembershipSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: membership } = await supabase
-    .from('unit_profile_memberships')
-    .select(`
-      id,
-      unit_id,
-      iadmin_units!inner (
-        managed_property_id,
-        iadmin_managed_properties!inner ( administration_id )
-      )
-    `)
-    .eq('id', parsed.membershipId)
-    .maybeSingle()
-
+  const membership = await getMembershipWithAdminFromPostgres(parsed.membershipId)
   if (!membership) throw new Error('Vinculo no encontrado')
-  const unit = Array.isArray(membership.iadmin_units) ? membership.iadmin_units[0] : membership.iadmin_units
-  const property = unit?.iadmin_managed_properties
-    ? Array.isArray(unit.iadmin_managed_properties)
-      ? unit.iadmin_managed_properties[0]
-      : unit.iadmin_managed_properties
-    : null
 
   const { profile } = await requireIAdmin({
     capability: 'holders.manage',
-    administrationId: property?.administration_id as string,
+    administrationId: membership.administration_id,
   })
 
-  const { error } = await supabase
-    .from('unit_profile_memberships')
-    .update({ active: false })
-    .eq('id', parsed.membershipId)
+  await deactivateMembershipByIdInPostgres(parsed.membershipId)
 
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: property?.administration_id,
-    actor_profile_id: profile.id,
-    entity_type: 'unit_profile_memberships',
-    entity_id: parsed.membershipId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: membership.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'unit_profile_memberships',
+    entityId: parsed.membershipId,
     action: 'unit_user.deactivated',
   })
 
-  revalidatePath(`/iadmin/consorcios/${unit?.managed_property_id}`)
+  revalidatePath(`/iadmin/consorcios/${membership.managed_property_id}`)
 }
 
 // ----------------------------------------------------------------------------
-// Informacion general del edificio
+// Informacion del edificio
 // ----------------------------------------------------------------------------
 
 const buildingInfoSchema = z.object({
@@ -665,30 +540,27 @@ const buildingInfoSchema = z.object({
 
 export async function createBuildingInformation(input: z.input<typeof buildingInfoSchema>) {
   const parsed = buildingInfoSchema.parse(input)
-  const { supabase, administrationId } = await getPropertyAdminId(parsed.propertyId)
-  const { profile } = await requireIAdmin({
-    capability: 'consorcio.edit',
-    administrationId,
-  })
 
-  const { data: property } = await supabase
-    .from('iadmin_managed_properties')
-    .select('building_id')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
   if (!property) throw new Error('Consorcio no encontrado')
 
-  const { error } = await supabase.from('building_information').insert({
-    building_id: property.building_id,
+  const { profile } = await requireIAdmin({
+    capability: 'consorcio.edit',
+    administrationId: property.administration_id,
+  })
+
+  const buildingId = await getBuildingIdForPropertyFromPostgres(parsed.propertyId)
+  if (!buildingId) throw new Error('Edificio no encontrado')
+
+  await insertBuildingInformationInPostgres({
+    buildingId,
     title: parsed.title,
     category: parsed.category,
     content: parsed.content,
-    visible_to: parsed.visibleTo,
-    sort_order: parsed.sortOrder,
-    created_by_profile_id: profile.id,
-    updated_by_profile_id: profile.id,
+    visibleTo: parsed.visibleTo,
+    sortOrder: parsed.sortOrder,
+    createdByProfileId: profile.id,
   })
-  if (error) throw new Error(error.message)
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
   revalidatePath('/usuario')
@@ -700,20 +572,23 @@ const deactivateBuildingInfoSchema = z.object({
   itemId: z.string().uuid(),
 })
 
-export async function deactivateBuildingInformation(input: z.input<typeof deactivateBuildingInfoSchema>) {
+export async function deactivateBuildingInformation(
+  input: z.input<typeof deactivateBuildingInfoSchema>,
+) {
   const parsed = deactivateBuildingInfoSchema.parse(input)
-  const { supabase, administrationId } = await getPropertyAdminId(parsed.propertyId)
+
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
+
   const { profile } = await requireIAdmin({
     capability: 'consorcio.edit',
-    administrationId,
+    administrationId: property.administration_id,
   })
 
-  const { error } = await supabase
-    .from('building_information')
-    .update({ is_active: false, updated_by_profile_id: profile.id })
-    .eq('id', parsed.itemId)
-
-  if (error) throw new Error(error.message)
+  await deactivateBuildingInformationInPostgres({
+    itemId: parsed.itemId,
+    updatedByProfileId: profile.id,
+  })
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
   revalidatePath('/usuario')
@@ -732,39 +607,32 @@ const openPeriodSchema = z.object({
 
 export async function openAccountingPeriod(input: z.input<typeof openPeriodSchema>) {
   const parsed = openPeriodSchema.parse(input)
-  const { supabase, administrationId } = await getPropertyAdminId(parsed.propertyId)
+
+  const property = await getManagedPropertyAdminIdFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
+
   const { profile } = await requireIAdmin({
     capability: 'liquidations.create',
-    administrationId,
+    administrationId: property.administration_id,
   })
 
-  const { data, error } = await supabase
-    .from('iadmin_accounting_periods')
-    .upsert(
-      {
-        managed_property_id: parsed.propertyId,
-        period_year: parsed.periodYear,
-        period_month: parsed.periodMonth,
-        status: 'open',
-      },
-      { onConflict: 'managed_property_id,period_year,period_month' },
-    )
-    .select('id')
-    .single()
+  const { id } = await upsertAccountingPeriodOpenInPostgres({
+    managedPropertyId: parsed.propertyId,
+    periodYear: parsed.periodYear,
+    periodMonth: parsed.periodMonth,
+  })
 
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_accounting_periods',
-    entity_id: data.id,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: property.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_accounting_periods',
+    entityId: id,
     action: 'period.opened',
     metadata: { period_year: parsed.periodYear, period_month: parsed.periodMonth },
   })
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
-  return { id: data.id as string }
+  return { id }
 }
 
 const changePeriodStatusSchema = z.object({
@@ -774,43 +642,26 @@ const changePeriodStatusSchema = z.object({
 
 export async function changePeriodStatus(input: z.input<typeof changePeriodStatusSchema>) {
   const parsed = changePeriodStatusSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: period } = await supabase
-    .from('iadmin_accounting_periods')
-    .select('id, managed_property_id, iadmin_managed_properties!inner(administration_id)')
-    .eq('id', parsed.periodId)
-    .maybeSingle()
+  const period = await getAccountingPeriodWithAdminFromPostgres(parsed.periodId)
   if (!period) throw new Error('Periodo no encontrado')
-
-  const propRel = Array.isArray(period.iadmin_managed_properties)
-    ? period.iadmin_managed_properties[0]
-    : period.iadmin_managed_properties
-  const administrationId = propRel?.administration_id as string
 
   const { profile } = await requireIAdmin({
     capability: parsed.nextStatus === 'closed' ? 'liquidations.close' : 'liquidations.create',
-    administrationId,
+    administrationId: period.administration_id,
   })
 
-  const patch: Record<string, unknown> = { status: parsed.nextStatus }
-  if (parsed.nextStatus === 'closed') {
-    patch.closed_at = new Date().toISOString()
-    patch.closed_by = profile.id
-  } else {
-    patch.closed_at = null
-    patch.closed_by = null
-  }
+  await changeAccountingPeriodStatusInPostgres({
+    periodId: parsed.periodId,
+    nextStatus: parsed.nextStatus,
+    closedByProfileId: parsed.nextStatus === 'closed' ? profile.id : null,
+  })
 
-  const { error } = await supabase.from('iadmin_accounting_periods').update(patch).eq('id', parsed.periodId)
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_accounting_periods',
-    entity_id: parsed.periodId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: period.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_accounting_periods',
+    entityId: parsed.periodId,
     action: `period.${parsed.nextStatus}`,
   })
 

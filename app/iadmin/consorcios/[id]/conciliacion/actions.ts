@@ -2,12 +2,19 @@
 
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
-
-// ----------------------------------------------------------------------------
-// Analyze statement: dado un listado de movimientos bancarios, sugerir el match
-// contra cobranzas de vecinos o pagos a proveedores.
-// ----------------------------------------------------------------------------
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  callIAdminNextReceiptNumberInPostgres,
+  deleteBankMovementInPostgres,
+  existingExpensePaymentMovementInPostgres,
+  getExpenseForPaymentFromPostgres,
+  getLiquidationItemRunFromPostgres,
+  insertBankMovementInPostgres,
+  insertCollectionPaymentInPostgres,
+  listOpenLiquidationItemsForPropertyFromPostgres,
+  listUnpaidApprovedExpensesFromPostgres,
+  sumLivePaymentsByItemIdsFromPostgres,
+} from '@/lib/db/iadmin-writes'
 
 const movementSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -65,7 +72,7 @@ function normalize(s: string): string {
   return s
     .toLowerCase()
     .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[̀-ͯ]/g, '')
     .replace(/[^\w\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
@@ -97,98 +104,45 @@ export async function analyzeBankStatement(
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
+  const openItems = await listOpenLiquidationItemsForPropertyFromPostgres(parsed.propertyId)
 
-  // Traemos items de la ultima corrida issued/closed no pagada
-  const { data: openItems } = await supabase
-    .from('iadmin_liquidation_items')
-    .select(`
-      id, unit_id, ordinary_amount, extraordinary_amount, previous_balance, liquidation_run_id,
-      iadmin_liquidation_runs!inner (status, managed_property_id),
-      iadmin_units!inner (code, iadmin_unit_holders(full_name, is_active))
-    `)
-    .eq('iadmin_liquidation_runs.managed_property_id', parsed.propertyId)
-    .in('iadmin_liquidation_runs.status', ['calculated', 'issued', 'closed'])
-
-  const items = (openItems ?? [])
-    .map((row: any) => {
-      const run = Array.isArray(row.iadmin_liquidation_runs) ? row.iadmin_liquidation_runs[0] : row.iadmin_liquidation_runs
-      const unit = Array.isArray(row.iadmin_units) ? row.iadmin_units[0] : row.iadmin_units
-      const holders = Array.isArray(unit?.iadmin_unit_holders) ? unit.iadmin_unit_holders : []
-      const activeHolder = holders.find((h: any) => h?.is_active) ?? holders[0] ?? null
+  const items = openItems
+    .map((row) => {
       const subtotal =
-        Number(row.ordinary_amount ?? 0) + Number(row.extraordinary_amount ?? 0) + Number(row.previous_balance ?? 0)
+        Number(row.ordinary_amount ?? 0) +
+        Number(row.extraordinary_amount ?? 0) +
+        Number(row.previous_balance ?? 0)
       return {
-        id: row.id as string,
-        unitCode: unit?.code ?? '—',
-        holderName: activeHolder?.full_name ?? null,
-        liquidationRunId: row.liquidation_run_id as string,
+        id: row.item_id,
+        unitCode: row.unit_code ?? '—',
+        holderName: row.holder_name,
+        liquidationRunId: row.liquidation_run_id,
         subtotal,
-        runStatus: run?.status as string,
+        runStatus: row.run_status,
       }
     })
     .filter((x) => x.runStatus !== 'draft')
 
-  // Restamos pagos vivos para tener balanceRemaining
   const itemIds = items.map((i) => i.id)
-  const paidByItem = new Map<string, number>()
-  if (itemIds.length > 0) {
-    const { data: payments } = await supabase
-      .from('iadmin_payments')
-      .select('liquidation_item_id, amount')
-      .in('liquidation_item_id', itemIds)
-      .eq('is_void', false)
-    for (const p of payments ?? []) {
-      if (!p.liquidation_item_id) continue
-      paidByItem.set(p.liquidation_item_id as string, (paidByItem.get(p.liquidation_item_id as string) ?? 0) + Number(p.amount))
-    }
-  }
+  const paidByItem = await sumLivePaymentsByItemIdsFromPostgres(itemIds)
 
   const itemsWithBalance = items
     .map((i) => ({ ...i, balanceRemaining: Math.max(0, i.subtotal - (paidByItem.get(i.id) ?? 0)) }))
     .filter((i) => i.balanceRemaining > 0.01)
 
-  // Gastos approved no pagados (para egresos)
-  const { data: expensesRaw } = await supabase
-    .from('iadmin_expenses')
-    .select('id, description, amount, iadmin_providers(name)')
-    .eq('managed_property_id', parsed.propertyId)
-    .in('status', ['approved', 'imputed'])
+  const openExpenses = (await listUnpaidApprovedExpensesFromPostgres(parsed.propertyId)).map((e) => ({
+    id: e.id,
+    providerName: e.provider_name,
+    description: e.description,
+    amount: Number(e.amount),
+  }))
 
-  const paidExpenseIds = new Set<string>()
-  if (expensesRaw && expensesRaw.length > 0) {
-    const expIds = expensesRaw.map((e: any) => e.id)
-    const { data: paidRows } = await supabase
-      .from('iadmin_bank_movements')
-      .select('expense_id')
-      .eq('movement_kind', 'expense_payment')
-      .in('expense_id', expIds)
-    for (const r of paidRows ?? []) {
-      if (r.expense_id) paidExpenseIds.add(r.expense_id as string)
-    }
-  }
-
-  const openExpenses = (expensesRaw ?? [])
-    .filter((e: any) => !paidExpenseIds.has(e.id))
-    .map((e: any) => {
-      const provider = Array.isArray(e.iadmin_providers) ? e.iadmin_providers[0] : e.iadmin_providers
-      return {
-        id: e.id as string,
-        providerName: provider?.name ?? null,
-        description: e.description as string,
-        amount: Number(e.amount),
-      }
-    })
-
-  // Matching
   const rows: StatementAnalysisRow[] = parsed.movements.map((movement, index) => {
     const descNorm = normalize(movement.description)
     const isIncome = movement.amount > 0
     const candidates: StatementMatchCandidate[] = []
 
     if (isIncome) {
-      // Matchear con items pendientes de cobro
       for (const it of itemsWithBalance) {
         const nameScore = it.holderName ? scoreMatch(descNorm, it.holderName) : 0
         const unitScore = descNorm.includes(normalize(it.unitCode)) ? 0.2 : 0
@@ -217,7 +171,6 @@ export async function analyzeBankStatement(
         }
       }
     } else {
-      // Egreso: matchear con gasto approved por nombre de proveedor o descripcion
       const outflow = Math.abs(movement.amount)
       for (const e of openExpenses) {
         const provScore = e.providerName ? scoreMatch(descNorm, e.providerName) : 0
@@ -261,10 +214,6 @@ export async function analyzeBankStatement(
   return { rows }
 }
 
-// ----------------------------------------------------------------------------
-// Apply reconciliation: crear payments y marcar gastos pagados en bulk
-// ----------------------------------------------------------------------------
-
 const applyItemSchema = z.union([
   z.object({
     kind: z.literal('collection'),
@@ -305,9 +254,6 @@ export async function applyReconciliation(
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-
   const result: ApplyReconciliationResult = {
     collectionsApplied: 0,
     expensesPaid: 0,
@@ -319,90 +265,69 @@ export async function applyReconciliation(
 
     try {
       if (item.kind === 'collection') {
-        // Crear bank movement (ingreso) + obtener receipt number + crear payment
-        const { data: liqItem } = await supabase
-          .from('iadmin_liquidation_items')
-          .select('id, unit_id, liquidation_run_id, iadmin_liquidation_runs!inner(managed_property_id)')
-          .eq('id', item.liquidationItemId)
-          .maybeSingle()
+        const liqItem = await getLiquidationItemRunFromPostgres(item.liquidationItemId)
         if (!liqItem) throw new Error('item no encontrado')
-        const run = Array.isArray(liqItem.iadmin_liquidation_runs) ? liqItem.iadmin_liquidation_runs[0] : liqItem.iadmin_liquidation_runs
-        if (run?.managed_property_id !== parsed.propertyId) throw new Error('item de otro consorcio')
+        if (liqItem.managed_property_id !== parsed.propertyId) throw new Error('item de otro consorcio')
 
-        const { data: movement, error: movError } = await supabase
-          .from('iadmin_bank_movements')
-          .insert({
-            administration_id: parsed.administrationId,
-            managed_property_id: parsed.propertyId,
-            cash_account_id: item.cashAccountId,
-            movement_date: item.paidAt,
-            description: item.description ?? 'Cobranza (conciliacion automatica)',
-            amount: item.amount,
-            external_ref: item.reference ?? null,
-            movement_kind: 'collection',
-            created_by: profile.id,
-          })
-          .select('id')
-          .single()
-        if (movError) throw new Error(movError.message)
-
-        const { data: receiptRpc, error: receiptError } = await supabase.rpc('iadmin_next_receipt_number', {
-          admin_id: parsed.administrationId,
-        })
-        if (receiptError) throw new Error(receiptError.message)
-
-        const { error: payError } = await supabase.from('iadmin_payments').insert({
-          administration_id: parsed.administrationId,
-          managed_property_id: parsed.propertyId,
-          liquidation_run_id: liqItem.liquidation_run_id,
-          liquidation_item_id: item.liquidationItemId,
-          unit_id: liqItem.unit_id,
-          cash_account_id: item.cashAccountId,
-          bank_movement_id: movement.id,
+        const movement = await insertBankMovementInPostgres({
+          administrationId: parsed.administrationId,
+          managedPropertyId: parsed.propertyId,
+          cashAccountId: item.cashAccountId,
+          movementDate: item.paidAt,
+          description: item.description ?? 'Cobranza (conciliacion automatica)',
           amount: item.amount,
-          paid_at: item.paidAt,
-          method: 'transferencia',
-          reference: item.reference ?? null,
-          receipt_number: receiptRpc,
-          created_by: profile.id,
+          externalRef: item.reference ?? null,
+          movementKind: 'collection',
+          createdBy: profile.id,
         })
-        if (payError) {
-          await supabase.from('iadmin_bank_movements').delete().eq('id', movement.id)
-          throw new Error(payError.message)
+
+        const receiptNumber = await callIAdminNextReceiptNumberInPostgres(parsed.administrationId)
+
+        try {
+          await insertCollectionPaymentInPostgres({
+            administrationId: parsed.administrationId,
+            managedPropertyId: parsed.propertyId,
+            liquidationRunId: liqItem.liquidation_run_id,
+            liquidationItemId: item.liquidationItemId,
+            unitId: liqItem.unit_id,
+            cashAccountId: item.cashAccountId,
+            bankMovementId: movement.id,
+            amount: item.amount,
+            surchargeAmount: 0,
+            paidAt: item.paidAt,
+            method: 'transferencia',
+            reference: item.reference ?? null,
+            receiptNumber,
+            dueLabel: null,
+            notes: null,
+            createdBy: profile.id,
+          })
+        } catch (error) {
+          await deleteBankMovementInPostgres(movement.id)
+          throw error
         }
         result.collectionsApplied += 1
       } else {
-        // expense_payment
-        const { data: expense } = await supabase
-          .from('iadmin_expenses')
-          .select('id, administration_id, managed_property_id, amount, description, status')
-          .eq('id', item.expenseId)
-          .maybeSingle()
+        const expense = await getExpenseForPaymentFromPostgres(item.expenseId)
         if (!expense) throw new Error('gasto no encontrado')
         if (expense.managed_property_id !== parsed.propertyId) throw new Error('gasto de otro consorcio')
 
-        // Evitar doble pago
-        const { data: existing } = await supabase
-          .from('iadmin_bank_movements')
-          .select('id')
-          .eq('expense_id', item.expenseId)
-          .eq('movement_kind', 'expense_payment')
-          .maybeSingle()
-        if (existing) throw new Error('gasto ya pagado')
+        if (await existingExpensePaymentMovementInPostgres(item.expenseId)) {
+          throw new Error('gasto ya pagado')
+        }
 
-        const { error: movError } = await supabase.from('iadmin_bank_movements').insert({
-          administration_id: parsed.administrationId,
-          managed_property_id: parsed.propertyId,
-          cash_account_id: item.cashAccountId,
-          movement_date: item.paidAt,
+        await insertBankMovementInPostgres({
+          administrationId: parsed.administrationId,
+          managedPropertyId: parsed.propertyId,
+          cashAccountId: item.cashAccountId,
+          movementDate: item.paidAt,
           description: `Pago a proveedor: ${expense.description}`,
           amount: -Number(expense.amount),
-          external_ref: item.reference ?? null,
-          movement_kind: 'expense_payment',
-          expense_id: item.expenseId,
-          created_by: profile.id,
+          externalRef: item.reference ?? null,
+          movementKind: 'expense_payment',
+          expenseId: item.expenseId,
+          createdBy: profile.id,
         })
-        if (movError) throw new Error(movError.message)
         result.expensesPaid += 1
       }
     } catch (error) {
@@ -413,11 +338,11 @@ export async function applyReconciliation(
     }
   }
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: parsed.administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_managed_properties',
-    entity_id: parsed.propertyId,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_managed_properties',
+    entityId: parsed.propertyId,
     action: 'reconciliation.applied',
     metadata: {
       collections: result.collectionsApplied,

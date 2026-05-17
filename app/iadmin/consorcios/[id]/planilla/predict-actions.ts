@@ -3,14 +3,12 @@
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { runAIChat, stripJsonFences } from '@/lib/iadmin/ai-chat'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
-import { upsertMonthlyCell } from '@/app/iadmin/consorcios/[id]/planilla/actions'
-import { emitAndNotify, type EmitAndNotifyResult } from '@/app/iadmin/consorcios/[id]/planilla/actions'
-
-// ----------------------------------------------------------------------------
-// generateMonthPredictions: pide a Claude que sugiera los montos del mes
-// basandose en el historico de cada rubro.
-// ----------------------------------------------------------------------------
+import { upsertMonthlyCell, emitAndNotify, type EmitAndNotifyResult } from '@/app/iadmin/consorcios/[id]/planilla/actions'
+import {
+  getManagedPropertyForProjectionFromPostgres,
+  listActiveProvidersForPredictionFromPostgres,
+  listExpensesWithPeriodForPredictionFromPostgres,
+} from '@/lib/db/iadmin-writes'
 
 const predictSchema = z.object({
   propertyId: z.string().uuid(),
@@ -68,14 +66,8 @@ export async function generateMonthPredictions(
   input: z.input<typeof predictSchema>,
 ): Promise<GeneratePredictionsResult> {
   const parsed = predictSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: property } = await supabase
-    .from('iadmin_managed_properties')
-    .select('id, administration_id, display_name, buildings(name)')
-    .eq('id', parsed.propertyId)
-    .maybeSingle()
+  const property = await getManagedPropertyForProjectionFromPostgres(parsed.propertyId)
   if (!property) throw new Error('Consorcio no encontrado')
 
   await requireIAdmin({
@@ -83,56 +75,32 @@ export async function generateMonthPredictions(
     administrationId: property.administration_id,
   })
 
-  const building = property.buildings
-    ? Array.isArray(property.buildings)
-      ? property.buildings[0]
-      : property.buildings
-    : null
-  const propertyName = property.display_name ?? building?.name ?? 'Consorcio'
+  const propertyName = property.display_name ?? property.building_name ?? 'Consorcio'
 
-  // Traer proveedores recurrentes + los que tuvieron gasto en los ultimos 6 meses
-  const { data: providers } = await supabase
-    .from('iadmin_providers')
-    .select('id, name, default_category, recurring_kind, is_recurring')
-    .eq('administration_id', property.administration_id)
-    .eq('is_active', true)
-
-  // Gastos de los últimos 12 meses para contexto amplio
+  const providers = await listActiveProvidersForPredictionFromPostgres(property.administration_id)
   const fromDate = new Date(parsed.year, parsed.month - 13, 1).toISOString().slice(0, 10)
-  const { data: expenses } = await supabase
-    .from('iadmin_expenses')
-    .select('provider_id, amount, issued_at, iadmin_accounting_periods(period_year, period_month), status')
-    .eq('managed_property_id', parsed.propertyId)
-    .gte('issued_at', fromDate)
-    .neq('status', 'rejected')
+  const expenses = await listExpensesWithPeriodForPredictionFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    fromDate,
+  })
 
-  // Armar historial por proveedor
   type Row = { providerId: string; name: string; monthly: Array<{ year: number; month: number; amount: number }> }
   const byProvider = new Map<string, Row>()
-  const providerById = new Map<string, any>()
-  for (const p of providers ?? []) providerById.set(p.id, p)
+  const providerById = new Map<string, (typeof providers)[number]>()
+  for (const p of providers) providerById.set(p.id, p)
 
-  for (const e of expenses ?? []) {
+  for (const e of expenses) {
     if (!e.provider_id) continue
-    const periodRef = Array.isArray(e.iadmin_accounting_periods)
-      ? e.iadmin_accounting_periods[0]
-      : e.iadmin_accounting_periods
-    if (!periodRef) continue
+    if (!e.period_year || !e.period_month) continue
     const row = byProvider.get(e.provider_id) ?? {
       providerId: e.provider_id,
       name: providerById.get(e.provider_id)?.name ?? 'Proveedor',
       monthly: [],
     }
-    // agregamos al array (puede haber varios gastos del mismo mes, los sumamos abajo)
-    row.monthly.push({
-      year: periodRef.period_year,
-      month: periodRef.period_month,
-      amount: Number(e.amount),
-    })
+    row.monthly.push({ year: e.period_year, month: e.period_month, amount: Number(e.amount) })
     byProvider.set(e.provider_id, row)
   }
 
-  // Consolidar: un amount total por (provider, year, month)
   type ProviderContext = {
     providerId: string
     providerName: string
@@ -142,9 +110,8 @@ export async function generateMonthPredictions(
     monthsWithData: number
   }
 
-  // Rubros elegibles: proveedores recurrentes + proveedores con al menos 1 mes de historia
   const candidateIds = new Set<string>()
-  for (const p of providers ?? []) {
+  for (const p of providers) {
     if (p.is_recurring) candidateIds.add(p.id)
   }
   for (const id of byProvider.keys()) candidateIds.add(id)
@@ -174,7 +141,7 @@ export async function generateMonthPredictions(
       providerId: id,
       providerName: p.name,
       category: p.default_category ?? null,
-      history: history.slice(-6), // ultimos 6 meses
+      history: history.slice(-6),
       lastAmount: history.length > 0 ? history[history.length - 1].amount : null,
       monthsWithData: history.length,
     })
@@ -228,7 +195,7 @@ Devolvé predicciones para TODOS los rubros listados.`
   const predictions: MonthPrediction[] = []
   for (const pred of result.data.predictions) {
     const ctx = contexts.find((c) => c.providerId === pred.providerId)
-    if (!ctx) continue // la IA devolvió un id desconocido
+    if (!ctx) continue
     predictions.push({
       providerId: pred.providerId,
       providerName: ctx.providerName,
@@ -246,10 +213,6 @@ Devolvé predicciones para TODOS los rubros listados.`
     skipped,
   }
 }
-
-// ----------------------------------------------------------------------------
-// acceptPredictionsAndEmit: bulk upsert de las celdas + emit en una transaccion logica
-// ----------------------------------------------------------------------------
 
 const acceptAndEmitSchema = z.object({
   propertyId: z.string().uuid(),

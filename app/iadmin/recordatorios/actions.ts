@@ -3,7 +3,16 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  bulkUpdatePendingRemindersInPostgres,
+  getReminderAdminFromPostgres,
+  insertReminderInPostgres,
+  listExistingRemindersTodayFromPostgres,
+  listReminderRunsWithItemsFromPostgres,
+  setReminderStatusInPostgres,
+  sumLivePaymentsByItemsFromPostgres,
+} from '@/lib/db/iadmin-writes'
 import type { IAdminReminderKind } from '@/lib/types'
 
 const generateSchema = z.object({
@@ -17,19 +26,6 @@ export type GenerateRemindersResult = {
   skipped: number
 }
 
-/**
- * Recorre las liquidaciones issued/closed de la administracion y crea
- * recordatorios pendientes segun la relacion de la fecha de hoy con los
- * vencimientos del item.
- *
- * Tipos:
- *  - pre_due: falta N dias para el primer vencimiento (amable)
- *  - overdue_first: ya paso el 1er venc, aun no llego el 2do
- *  - overdue_second: ya paso el 2do venc (o unico venc) hasta 30 dias
- *  - overdue_heavy: mas de 30 dias de mora
- *
- * Idempotente: no duplica recordatorios del mismo item+kind+dia.
- */
 export async function generateReminders(
   input: z.input<typeof generateSchema>,
 ): Promise<GenerateRemindersResult> {
@@ -39,46 +35,54 @@ export async function generateReminders(
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
-  // Runs issued/closed de la administracion (con opcion de filtrar por property)
-  let query = supabase
-    .from('iadmin_liquidation_runs')
-    .select(`
-      id, managed_property_id, due_dates,
-      iadmin_liquidation_items (
-        id,
-        ordinary_amount, extraordinary_amount, previous_balance,
-        iadmin_units ( code, iadmin_unit_holders(full_name, phone, email, is_active) )
-      )
-    `)
-    .eq('administration_id', parsed.administrationId)
-    .in('status', ['issued', 'closed'])
+  const flatRows = await listReminderRunsWithItemsFromPostgres({
+    administrationId: parsed.administrationId,
+    managedPropertyId: parsed.propertyId ?? null,
+  })
 
-  if (parsed.propertyId) {
-    query = query.eq('managed_property_id', parsed.propertyId)
+  // Group by run
+  type RunGroup = {
+    id: string
+    managed_property_id: string
+    due_dates: any
+    items: Array<{
+      id: string
+      ordinary_amount: string | null
+      extraordinary_amount: string | null
+      previous_balance: string | null
+      unit_code: string | null
+      holder_name: string | null
+      holder_phone: string | null
+    }>
   }
-
-  const { data: runs } = await query
-
-  // Traer pagos vivos en batch
-  const runIds = (runs ?? []).map((r: any) => r.id)
-  const paidByItem = new Map<string, number>()
-  if (runIds.length > 0) {
-    const { data: payments } = await supabase
-      .from('iadmin_payments')
-      .select('liquidation_item_id, amount')
-      .in('liquidation_run_id', runIds)
-      .eq('is_void', false)
-    for (const p of payments ?? []) {
-      if (!p.liquidation_item_id) continue
-      paidByItem.set(p.liquidation_item_id, (paidByItem.get(p.liquidation_item_id) ?? 0) + Number(p.amount))
+  const runsById = new Map<string, RunGroup>()
+  for (const row of flatRows) {
+    let run = runsById.get(row.run_id)
+    if (!run) {
+      run = {
+        id: row.run_id,
+        managed_property_id: row.managed_property_id,
+        due_dates: row.due_dates,
+        items: [],
+      }
+      runsById.set(row.run_id, run)
     }
+    run.items.push({
+      id: row.item_id,
+      ordinary_amount: row.ordinary_amount,
+      extraordinary_amount: row.extraordinary_amount,
+      previous_balance: row.previous_balance,
+      unit_code: row.unit_code,
+      holder_name: row.holder_full_name,
+      holder_phone: row.holder_phone,
+    })
   }
+
+  const runIds = Array.from(runsById.keys())
+  const paidByItem = await sumLivePaymentsByItemsFromPostgres(runIds)
 
   type Candidate = {
     liquidation_item_id: string
@@ -94,8 +98,13 @@ export async function generateReminders(
 
   const candidates: Candidate[] = []
 
-  for (const run of runs ?? []) {
-    const dueDates = (run.due_dates ?? []) as Array<{ label?: string; date?: string; surcharge_pct?: number; surchargePct?: number }>
+  for (const run of runsById.values()) {
+    const dueDates = (run.due_dates ?? []) as Array<{
+      label?: string
+      date?: string
+      surcharge_pct?: number
+      surchargePct?: number
+    }>
     if (dueDates.length === 0) continue
     const sortedDues = [...dueDates]
       .map((d) => ({
@@ -106,17 +115,14 @@ export async function generateReminders(
       .filter((d) => d.date)
       .sort((a, b) => a.date.localeCompare(b.date))
 
-    const items = Array.isArray(run.iadmin_liquidation_items) ? run.iadmin_liquidation_items : []
-    for (const it of items) {
+    for (const it of run.items) {
       const subtotal =
-        Number(it.ordinary_amount ?? 0) + Number(it.extraordinary_amount ?? 0) + Number(it.previous_balance ?? 0)
+        Number(it.ordinary_amount ?? 0) +
+        Number(it.extraordinary_amount ?? 0) +
+        Number(it.previous_balance ?? 0)
       const paid = paidByItem.get(it.id) ?? 0
       const balance = subtotal - paid
       if (balance <= 0.01) continue
-
-      const unit = Array.isArray(it.iadmin_units) ? it.iadmin_units[0] : it.iadmin_units
-      const holders = Array.isArray(unit?.iadmin_unit_holders) ? unit.iadmin_unit_holders : []
-      const holder = holders.find((h: any) => h?.is_active) ?? holders[0] ?? null
 
       const firstDue = sortedDues[0]
       const lastDue = sortedDues[sortedDues.length - 1]
@@ -140,7 +146,13 @@ export async function generateReminders(
 
       if (daysToFirst !== null && daysToFirst >= 0 && daysToFirst <= parsed.daysBeforeDue) {
         kind = 'pre_due'
-      } else if (daysToFirst !== null && daysToFirst < 0 && sortedDues.length > 1 && lastDueDate && today < lastDueDate) {
+      } else if (
+        daysToFirst !== null &&
+        daysToFirst < 0 &&
+        sortedDues.length > 1 &&
+        lastDueDate &&
+        today < lastDueDate
+      ) {
         kind = 'overdue_first'
         const second = sortedDues[1]
         dueLabel = second.label
@@ -165,9 +177,9 @@ export async function generateReminders(
         amount_due: Math.max(0, Math.round(effectiveAmount * 100) / 100),
         due_label: dueLabel,
         due_date: dueDate,
-        unit_code: unit?.code ?? '—',
-        holder_name: holder?.full_name ?? null,
-        holder_phone: holder?.phone ?? null,
+        unit_code: it.unit_code ?? '—',
+        holder_name: it.holder_name,
+        holder_phone: it.holder_phone,
       })
     }
   }
@@ -176,18 +188,11 @@ export async function generateReminders(
     return { created: 0, skipped: 0 }
   }
 
-  // Chequear existentes del día
   const todayStr = today.toISOString().slice(0, 10)
-  const { data: existing } = await supabase
-    .from('iadmin_reminders')
-    .select('liquidation_item_id, reminder_kind, generated_at')
-    .in(
-      'liquidation_item_id',
-      candidates.map((c) => c.liquidation_item_id),
-    )
-    .gte('generated_at', `${todayStr}T00:00:00Z`)
-
-  const existingKeys = new Set((existing ?? []).map((r: any) => `${r.liquidation_item_id}::${r.reminder_kind}`))
+  const existingKeys = await listExistingRemindersTodayFromPostgres({
+    liquidationItemIds: candidates.map((c) => c.liquidation_item_id),
+    todayDate: todayStr,
+  })
 
   const MESSAGES: Record<IAdminReminderKind, (c: Candidate) => string> = {
     pre_due: (c) =>
@@ -208,29 +213,28 @@ export async function generateReminders(
       skipped += 1
       continue
     }
-    const { error } = await supabase.from('iadmin_reminders').insert({
-      administration_id: parsed.administrationId,
-      managed_property_id: c.managed_property_id,
-      liquidation_item_id: c.liquidation_item_id,
-      reminder_kind: c.reminder_kind,
-      status: 'pending',
-      amount_due: c.amount_due,
-      due_label: c.due_label,
-      due_date: c.due_date,
-      message_body: MESSAGES[c.reminder_kind](c),
-    })
-    if (error) {
-      skipped += 1
-    } else {
+    try {
+      await insertReminderInPostgres({
+        administrationId: parsed.administrationId,
+        managedPropertyId: c.managed_property_id,
+        liquidationItemId: c.liquidation_item_id,
+        reminderKind: c.reminder_kind,
+        amountDue: c.amount_due,
+        dueLabel: c.due_label,
+        dueDate: c.due_date,
+        messageBody: MESSAGES[c.reminder_kind](c),
+      })
       created += 1
+    } catch {
+      skipped += 1
     }
   }
 
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: parsed.administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_reminders',
-    entity_id: null,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_reminders',
+    entityId: null,
     action: 'reminders.generated',
     metadata: { created, skipped, property_id: parsed.propertyId ?? null },
   })
@@ -247,14 +251,8 @@ const markSchema = z.object({
 
 export async function updateReminderStatus(input: z.input<typeof markSchema>) {
   const parsed = markSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
 
-  const { data: reminder } = await supabase
-    .from('iadmin_reminders')
-    .select('id, administration_id')
-    .eq('id', parsed.reminderId)
-    .maybeSingle()
+  const reminder = await getReminderAdminFromPostgres(parsed.reminderId)
   if (!reminder) throw new Error('Recordatorio no encontrado')
 
   const { profile } = await requireIAdmin({
@@ -262,20 +260,12 @@ export async function updateReminderStatus(input: z.input<typeof markSchema>) {
     administrationId: reminder.administration_id,
   })
 
-  const patch: Record<string, unknown> = {
+  await setReminderStatusInPostgres({
+    reminderId: parsed.reminderId,
     status: parsed.action,
-  }
-  if (parsed.action === 'sent') {
-    patch.sent_at = new Date().toISOString()
-    patch.sent_by = profile.id
-  } else {
-    patch.dismissed_at = new Date().toISOString()
-    patch.dismissed_by = profile.id
-    if (parsed.notes) patch.notes = parsed.notes
-  }
-
-  const { error } = await supabase.from('iadmin_reminders').update(patch).eq('id', parsed.reminderId)
-  if (error) throw new Error(error.message)
+    actorProfileId: profile.id,
+    notes: parsed.notes ?? null,
+  })
 
   revalidatePath('/iadmin/recordatorios')
 }
@@ -290,42 +280,27 @@ export async function bulkUpdateReminders(
   input: z.input<typeof bulkSchema>,
 ): Promise<{ updated: number }> {
   const parsed = bulkSchema.parse(input)
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
-
   const { profile } = await requireIAdmin({
     capability: 'reminders.send',
     administrationId: parsed.administrationId,
   })
 
-  const now = new Date().toISOString()
-  const patch: Record<string, unknown> = { status: parsed.action }
-  if (parsed.action === 'sent') {
-    patch.sent_at = now
-    patch.sent_by = profile.id
-  } else {
-    patch.dismissed_at = now
-    patch.dismissed_by = profile.id
-  }
+  const updated = await bulkUpdatePendingRemindersInPostgres({
+    administrationId: parsed.administrationId,
+    reminderIds: parsed.reminderIds,
+    status: parsed.action,
+    actorProfileId: profile.id,
+  })
 
-  const { error, count } = await supabase
-    .from('iadmin_reminders')
-    .update(patch, { count: 'exact' })
-    .eq('administration_id', parsed.administrationId)
-    .in('id', parsed.reminderIds)
-    .eq('status', 'pending')
-
-  if (error) throw new Error(error.message)
-
-  await supabase.from('iadmin_audit_logs').insert({
-    administration_id: parsed.administrationId,
-    actor_profile_id: profile.id,
-    entity_type: 'iadmin_reminders',
-    entity_id: null,
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_reminders',
+    entityId: null,
     action: `reminders.bulk_${parsed.action}`,
-    metadata: { count: count ?? 0 },
+    metadata: { count: updated },
   })
 
   revalidatePath('/iadmin/recordatorios')
-  return { updated: count ?? 0 }
+  return { updated }
 }

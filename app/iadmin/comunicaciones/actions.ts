@@ -3,7 +3,8 @@
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { runAIChat, stripJsonFences } from '@/lib/iadmin/ai-chat'
-import { getSupabaseServerClient } from '@/lib/supabase/server'
+import { getIAdminAdministrationByIdFromPostgres } from '@/lib/db/iadmin-core'
+import { getManagedPropertyContextFromPostgres } from '@/lib/db/iadmin-writes'
 
 const draftSchema = z.object({
   administrationId: z.string().uuid(),
@@ -47,32 +48,16 @@ export async function generateAnnouncement(
     administrationId: parsed.administrationId,
   })
 
-  const supabase = await getSupabaseServerClient()
-  if (!supabase) throw new Error('Supabase no configurado')
+  const admin = await getIAdminAdministrationByIdFromPostgres(parsed.administrationId)
 
-  // Contexto: administracion + consorcio (si aplica)
-  const { data: admin } = await supabase
-    .from('iadmin_administrations')
-    .select('name, legal_name')
-    .eq('id', parsed.administrationId)
-    .maybeSingle()
-
-  let propertyName = ''
   let propertyContext = ''
   if (parsed.managedPropertyId) {
-    const { data: prop } = await supabase
-      .from('iadmin_managed_properties')
-      .select('display_name, buildings(name, address)')
-      .eq('id', parsed.managedPropertyId)
-      .maybeSingle()
-    const building = prop?.buildings
-      ? Array.isArray(prop.buildings)
-        ? prop.buildings[0]
-        : prop.buildings
-      : null
-    propertyName = prop?.display_name ?? building?.name ?? ''
-    if (propertyName || building?.address) {
-      propertyContext = `\n- Consorcio: ${propertyName || building?.name || '—'}${building?.address ? ` (${building.address})` : ''}`
+    const prop = await getManagedPropertyContextFromPostgres(parsed.managedPropertyId)
+    if (prop) {
+      const propertyName = prop.display_name ?? prop.building_name ?? ''
+      if (propertyName || prop.building_address) {
+        propertyContext = `\n- Consorcio: ${propertyName || prop.building_name || '—'}${prop.building_address ? ` (${prop.building_address})` : ''}`
+      }
     }
   }
 
