@@ -5,13 +5,19 @@
       "Sid": "S3CountrifyAssets",
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
-      "Resource": "arn:aws:s3:::countrify-prod-assets/*"
+      "Resource": [
+        "arn:aws:s3:::countrify-prod-assets/*",
+        "arn:aws:s3:::citify-prod-assets/*"
+      ]
     },
     {
       "Sid": "S3CountrifyAssetsList",
       "Effect": "Allow",
       "Action": ["s3:ListBucket", "s3:GetBucketLocation"],
-      "Resource": "arn:aws:s3:::countrify-prod-assets"
+      "Resource": [
+        "arn:aws:s3:::countrify-prod-assets",
+        "arn:aws:s3:::citify-prod-assets"
+      ]
     },
     {
       "Sid": "CognitoCountrifyPool",
