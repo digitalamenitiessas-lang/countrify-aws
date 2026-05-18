@@ -1,20 +1,14 @@
+'use client'
+
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
+import { ContactDialog, type ContactKind } from '@/components/home/contact-dialog'
 
 const CONTACT_EMAIL = 'digitalamenitiessas@gmail.com'
 
-const countryMailto = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
-  'Quiero sumar mi country a Countrify',
-)}&body=${encodeURIComponent(
-  'Hola! Soy administrador/a de un country y me interesa sumarlo a Countrify.\n\nNombre del country:\nUbicación:\nCantidad de unidades:\nMi nombre y rol:\nTeléfono de contacto:\n',
-)}`
-
-const businessMailto = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent(
-  'Quiero adherir mi negocio a Countrify',
-)}&body=${encodeURIComponent(
-  'Hola! Quiero adherir mi negocio a Countrify.\n\nNombre del negocio:\nRubro:\nUbicación:\nWeb / Instagram:\nMi nombre y rol:\nTeléfono de contacto:\n',
-)}`
-
 export function AffiliateSection() {
+  const [openKind, setOpenKind] = useState<ContactKind | null>(null)
+
   return (
     <section className="relative z-10 mx-auto w-full max-w-5xl px-6 py-20">
       <div className="text-center">
@@ -42,11 +36,11 @@ export function AffiliateSection() {
             los vecinos.
           </p>
           <Button
-            asChild
             size="lg"
             className="mt-6 bg-[#112250] text-white hover:bg-[#3b507d]"
+            onClick={() => setOpenKind('country')}
           >
-            <a href={countryMailto}>Contactar para sumar mi country</a>
+            Contactar para sumar mi country
           </Button>
         </article>
 
@@ -60,12 +54,12 @@ export function AffiliateSection() {
             descuentos y experiencias. Te acompañamos en el alta y la gestión.
           </p>
           <Button
-            asChild
             size="lg"
             variant="outline"
             className="mt-6 border-[#112250] text-[#112250] hover:bg-[#f4dcb3]/40"
+            onClick={() => setOpenKind('business')}
           >
-            <a href={businessMailto}>Quiero adherir mi negocio</a>
+            Quiero adherir mi negocio
           </Button>
         </article>
       </div>
@@ -79,6 +73,12 @@ export function AffiliateSection() {
           {CONTACT_EMAIL}
         </a>
       </p>
+
+      <ContactDialog
+        open={openKind !== null}
+        onOpenChange={(open) => !open && setOpenKind(null)}
+        kind={openKind ?? 'business'}
+      />
     </section>
   )
 }

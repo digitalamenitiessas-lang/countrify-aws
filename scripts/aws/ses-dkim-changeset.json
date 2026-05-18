@@ -1,0 +1,32 @@
+{
+  "Comment": "SES DKIM CNAMEs for countrify.com.ar",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "puzw6nzzhei2itc5vleb77iz5bdpbu4z._domainkey.countrify.com.ar",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{ "Value": "puzw6nzzhei2itc5vleb77iz5bdpbu4z.dkim.amazonses.com" }]
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "jzoqzvn6blbhjvouoxaoq4cf53qhobne._domainkey.countrify.com.ar",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{ "Value": "jzoqzvn6blbhjvouoxaoq4cf53qhobne.dkim.amazonses.com" }]
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "ntrn26lvvq6appu5cxdz3eqgxd2faxg2._domainkey.countrify.com.ar",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{ "Value": "ntrn26lvvq6appu5cxdz3eqgxd2faxg2.dkim.amazonses.com" }]
+      }
+    }
+  ]
+}

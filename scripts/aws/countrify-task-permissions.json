@@ -47,6 +47,15 @@
       "Effect": "Allow",
       "Action": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
       "Resource": "arn:aws:secretsmanager:us-east-1:351885857894:secret:countrify/*"
+    },
+    {
+      "Sid": "SESSendEmail",
+      "Effect": "Allow",
+      "Action": ["ses:SendEmail", "ses:SendRawEmail"],
+      "Resource": [
+        "arn:aws:ses:us-east-1:351885857894:identity/countrify.com.ar",
+        "arn:aws:ses:us-east-1:351885857894:identity/digitalamenitiessas@gmail.com"
+      ]
     }
   ]
 }
