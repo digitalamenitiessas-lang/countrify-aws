@@ -43,16 +43,32 @@ function getPoolConfig(): PoolConfig {
     ssl: process.env.DB_SSL === 'disable' ? false : { rejectUnauthorized: false },
     max: Number(process.env.DB_POOL_MAX ?? 10),
     idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS ?? 30_000),
-    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS ?? 10_000),
+    connectionTimeoutMillis: Number(process.env.DB_CONNECT_TIMEOUT_MS ?? 30_000),
   }
 }
 
 export function getPostgresPool() {
   if (!global.__citifyPgPool) {
-    global.__citifyPgPool = new Pool(getPoolConfig())
+    const pool = new Pool(getPoolConfig())
+    // Sin este handler, una conexión idle que el server cierra (RDS, pgbouncer,
+    // firewall) tira un 'error' no manejado y mata el proceso de Node.
+    pool.on('error', (err) => {
+      console.error('[pg pool] idle client error:', err.message)
+    })
+    global.__citifyPgPool = pool
   }
 
   return global.__citifyPgPool
+}
+
+function isTransientConnectionError(err: unknown) {
+  const msg = err instanceof Error ? err.message.toLowerCase() : ''
+  return (
+    msg.includes('connection terminated')
+    || msg.includes('connection ended')
+    || msg.includes('econnreset')
+    || msg.includes('socket hang up')
+  )
 }
 
 export async function withPgClient<T>(callback: (client: PoolClient) => Promise<T>) {
@@ -68,7 +84,17 @@ export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
   text: string,
   values?: unknown[],
 ): Promise<QueryResult<T>> {
-  return getPostgresPool().query<T>(text, values)
+  try {
+    return await getPostgresPool().query<T>(text, values)
+  } catch (err) {
+    // Solo reintentamos cuando una conexión idle del pool fue cerrada por el server.
+    // Para timeouts de conexión inicial no tiene sentido reintentar inmediato.
+    if (isTransientConnectionError(err) && !String((err as Error).message).toLowerCase().includes('connection timeout')) {
+      console.warn('[pg] conexión cerrada, reintentando una vez:', (err as Error).message)
+      return await getPostgresPool().query<T>(text, values)
+    }
+    throw err
+  }
 }
 
 // Ejecuta una serie de queries dentro de una transacción con
