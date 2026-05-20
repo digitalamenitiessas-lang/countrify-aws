@@ -16,12 +16,26 @@ type CognitoEnv = {
   clientId: string
 }
 
+export type CognitoPoolSource = 'primary' | 'business'
+
 let cognitoClient: CognitoIdentityProviderClient | null = null
 
 export function getCognitoEnv(): CognitoEnv | null {
   const region = process.env.AWS_COGNITO_REGION?.trim()
   const userPoolId = process.env.AWS_COGNITO_USER_POOL_ID?.trim()
   const clientId = process.env.AWS_COGNITO_CLIENT_ID?.trim()
+
+  if (!region || !userPoolId || !clientId) {
+    return null
+  }
+
+  return { region, userPoolId, clientId }
+}
+
+export function getBusinessCognitoEnv(): CognitoEnv | null {
+  const region = process.env.AWS_COGNITO_REGION?.trim()
+  const userPoolId = process.env.AWS_COGNITO_BUSINESS_USER_POOL_ID?.trim()
+  const clientId = process.env.AWS_COGNITO_BUSINESS_CLIENT_ID?.trim()
 
   if (!region || !userPoolId || !clientId) {
     return null
@@ -144,4 +158,42 @@ export async function signInWithCognitoPassword(email: string, password: string)
       },
     }),
   )
+}
+
+export async function signInWithBusinessPool(email: string, password: string) {
+  const env = getBusinessCognitoEnv()
+  const client = getCognitoClient()
+
+  if (!env || !client) {
+    throw new Error('Cognito (business pool) no esta configurado.')
+  }
+
+  return client.send(
+    new InitiateAuthCommand({
+      ClientId: env.clientId,
+      AuthFlow: AuthFlowType.USER_PASSWORD_AUTH,
+      AuthParameters: {
+        USERNAME: email.trim().toLowerCase(),
+        PASSWORD: password,
+      },
+    }),
+  )
+}
+
+export async function signInWithCognitoFallback(
+  email: string,
+  password: string,
+): Promise<{ source: CognitoPoolSource }> {
+  try {
+    await signInWithCognitoPassword(email, password)
+    return { source: 'primary' }
+  } catch (error: any) {
+    const isMissingUser =
+      error?.name === 'UserNotFoundException' || error?.name === 'NotAuthorizedException'
+    if (!isMissingUser || !getBusinessCognitoEnv()) {
+      throw error
+    }
+    await signInWithBusinessPool(email, password)
+    return { source: 'business' }
+  }
 }

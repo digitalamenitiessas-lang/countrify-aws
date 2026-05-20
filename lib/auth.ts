@@ -4,7 +4,12 @@ import {
   getIAdminRoleCapabilityOverridesFromPostgres,
   getIAdminRoleGrantsForProfileFromPostgres,
 } from '@/lib/db/iadmin-core'
-import { findProfileByEmail, findProfileById } from '@/lib/db/profiles'
+import {
+  findBusinessProfileByEmail,
+  findBusinessProfileById,
+  findProfileByEmail,
+  findProfileById,
+} from '@/lib/db/profiles'
 import { getAppSession } from '@/lib/auth/session'
 import type {
   IAdminAdministration,
@@ -35,11 +40,15 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   const appSession = await getAppSession()
   if (appSession?.provider !== 'cognito') return null
 
-  const profile = appSession.profileId
-    ? await findProfileById(appSession.profileId)
-    : await findProfileByEmail(appSession.email)
+  if (appSession.profileId) {
+    const own = await findProfileById(appSession.profileId)
+    if (own) return own
+    return (await findBusinessProfileById(appSession.profileId)) ?? null
+  }
 
-  return profile ?? null
+  const own = await findProfileByEmail(appSession.email)
+  if (own) return own
+  return (await findBusinessProfileByEmail(appSession.email)) ?? null
 }
 
 export async function requireProfile(allowedRoles?: UserRole[]) {

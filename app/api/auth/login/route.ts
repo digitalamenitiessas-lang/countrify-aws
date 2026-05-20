@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { signInWithCognitoPassword } from '@/lib/aws/cognito'
-import { findProfileByEmail } from '@/lib/db/profiles'
+import { signInWithCognitoFallback } from '@/lib/aws/cognito'
+import { findBusinessProfileByEmail, findProfileByEmail } from '@/lib/db/profiles'
 import { createSessionToken, getAppSessionCookieDescriptor } from '@/lib/auth/session'
 
 type LoginBody = {
@@ -26,12 +26,16 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    await signInWithCognitoPassword(email, password)
+    const { source } = await signInWithCognitoFallback(email, password)
 
-    const profile = await findProfileByEmail(email)
+    const profile =
+      source === 'business'
+        ? await findBusinessProfileByEmail(email)
+        : (await findProfileByEmail(email)) ?? (await findBusinessProfileByEmail(email))
+
     if (!profile) {
       return NextResponse.json(
-        { error: 'La cuenta existe en Cognito, pero todavia no tiene perfil CITIFY en AWS.' },
+        { error: 'La cuenta existe en Cognito, pero todavia no tiene perfil habilitado en Countrify.' },
         { status: 403 },
       )
     }

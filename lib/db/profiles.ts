@@ -91,3 +91,36 @@ export async function findProfileById(id: string) {
 
   return mapProfileRow(result.rows[0])
 }
+
+// ----------------------------------------------------------------------------
+// Business users live in Citify's public.profiles (shared via public.businesses).
+// We accept them in Countrify only when role = 'negocio_admin' and they have a
+// linked business. Anything else stays out.
+// ----------------------------------------------------------------------------
+
+const BUSINESS_PROFILE_SELECT = `
+  select id, email, full_name, role, avatar_text, business_id,
+         null::uuid as building_id, null::text as floor, null::text as unit,
+         phone, created_at
+  from public.profiles
+  where role = 'negocio_admin'
+    and business_id is not null
+`
+
+export async function findBusinessProfileByEmail(email: string) {
+  const result = await pgQuery(
+    `${BUSINESS_PROFILE_SELECT} and lower(email) = lower($1) limit 1`,
+    [email],
+  )
+  if (!result.rows[0]) return null
+  return mapProfileRow(result.rows[0])
+}
+
+export async function findBusinessProfileById(id: string) {
+  const result = await pgQuery(
+    `${BUSINESS_PROFILE_SELECT} and id = $1 limit 1`,
+    [id],
+  )
+  if (!result.rows[0]) return null
+  return mapProfileRow(result.rows[0])
+}
