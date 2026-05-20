@@ -31,7 +31,7 @@ export async function POST(req: NextRequest) {
     const profile =
       source === 'business'
         ? await findBusinessProfileByEmail(email)
-        : (await findProfileByEmail(email)) ?? (await findBusinessProfileByEmail(email))
+        : await findProfileByEmail(email)
 
     if (!profile) {
       return NextResponse.json(

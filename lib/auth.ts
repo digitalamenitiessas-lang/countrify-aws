@@ -40,15 +40,17 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   const appSession = await getAppSession()
   if (appSession?.provider !== 'cognito') return null
 
-  if (appSession.profileId) {
-    const own = await findProfileById(appSession.profileId)
-    if (own) return own
-    return (await findBusinessProfileById(appSession.profileId)) ?? null
+  if (appSession.role === 'negocio_admin') {
+    if (appSession.profileId) {
+      return (await findBusinessProfileById(appSession.profileId)) ?? null
+    }
+    return (await findBusinessProfileByEmail(appSession.email)) ?? null
   }
 
-  const own = await findProfileByEmail(appSession.email)
-  if (own) return own
-  return (await findBusinessProfileByEmail(appSession.email)) ?? null
+  if (appSession.profileId) {
+    return (await findProfileById(appSession.profileId)) ?? null
+  }
+  return (await findProfileByEmail(appSession.email)) ?? null
 }
 
 export async function requireProfile(allowedRoles?: UserRole[]) {

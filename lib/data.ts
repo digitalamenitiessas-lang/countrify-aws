@@ -184,7 +184,7 @@ import {
   listSavedPromotionIdsForProfileFromPostgres,
   listUsedPromotionIdsForProfileFromPostgres,
 } from '@/lib/db/consumer'
-import { findProfileById } from '@/lib/db/profiles'
+import { findBusinessProfileById, findProfileById } from '@/lib/db/profiles'
 import { getAllBusinessesFromPostgres, getBusinessByIdFromPostgres } from '@/lib/db/businesses'
 import { getPublicPromotionsFromPostgres } from '@/lib/db/public-home'
 import { getPromotionsForBusinessFromPostgres, type PromotionRow } from '@/lib/db/promotions'
@@ -734,7 +734,7 @@ export async function getPromotionsPageData(): Promise<PromotionsPageData> {
 }
 
 export async function getBusinessDashboardData(profileId: string): Promise<BusinessDashboardData> {
-  const profile = await findProfileById(profileId)
+  const profile = (await findProfileById(profileId)) ?? (await findBusinessProfileById(profileId))
   const businessId = profile?.businessId ?? null
 
   if (!businessId) {
