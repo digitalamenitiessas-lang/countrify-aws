@@ -150,6 +150,44 @@ const BUSINESS_PROFILE_SELECT = `
     and business_id is not null
 `
 
+// Upserta un profile de negocio en public.profiles (schema compartido con
+// Citify). Lo usa el super_admin cuando crea un business + admin: el FK
+// public.businesses.owner_profile_id apunta a public.profiles(id), asi que
+// el row debe vivir ahi (no en countrify.profiles).
+export async function upsertBusinessProfile(input: {
+  id: string
+  email: string
+  fullName: string
+  avatarText: string
+  phone: string | null
+  businessId: string | null
+  passwordMustChangeOnCreate?: boolean
+}): Promise<Profile> {
+  const result = await pgQuery(
+    `
+      insert into public.profiles (id, email, full_name, avatar_text, role, phone, business_id, password_must_change)
+      values ($1, lower($2), $3, $4, 'negocio_admin', $5, $6, coalesce($7, false))
+      on conflict (id) do update set
+        email = excluded.email,
+        full_name = excluded.full_name,
+        avatar_text = excluded.avatar_text,
+        phone = excluded.phone,
+        business_id = excluded.business_id
+      returning *, null::uuid as building_id, null::text as floor, null::text as unit
+    `,
+    [
+      input.id,
+      input.email,
+      input.fullName,
+      input.avatarText,
+      input.phone,
+      input.businessId,
+      input.passwordMustChangeOnCreate ?? null,
+    ],
+  )
+  return mapProfileRow(result.rows[0])
+}
+
 export async function findBusinessProfileByEmail(email: string) {
   const result = await pgQuery(
     `${BUSINESS_PROFILE_SELECT} and lower(email) = lower($1) limit 1`,

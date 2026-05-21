@@ -84,8 +84,9 @@ export async function adminCreateCognitoUser(input: {
   email: string
   password: string
   fullName: string
+  source?: 'primary' | 'business'
 }): Promise<{ sub: string; alreadyExisted: boolean }> {
-  const env = getCognitoEnv()
+  const env = input.source === 'business' ? getBusinessCognitoEnv() : getCognitoEnv()
   const client = getCognitoClient()
 
   if (!env || !client) {

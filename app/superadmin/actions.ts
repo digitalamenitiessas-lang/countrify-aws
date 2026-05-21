@@ -18,7 +18,12 @@ import type {
 } from '@/lib/types'
 import { inferInitialOccupancyMapping } from '@/lib/superadmin/initial-occupancy-ai'
 import { adminCreateCognitoUser } from '@/lib/aws/cognito'
-import { findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
+import {
+  findBusinessProfileByEmail,
+  findProfileByEmail,
+  upsertBusinessProfile,
+  upsertProfile,
+} from '@/lib/db/profiles'
 import {
   assignBuildingAdminInPostgres,
   assignIAdminRoleGrantInPostgres,
@@ -354,7 +359,13 @@ async function findOrCreatePlatformProfile(input: {
   businessId?: string | null
 }) {
   const normalizedEmail = input.email.toLowerCase()
-  const existing = await findProfileByEmail(normalizedEmail)
+  const isBusiness = input.role === 'negocio_admin'
+
+  // Negocios viven en public.profiles (compartido con Citify) y en el
+  // business pool de Cognito. El resto en countrify.profiles + pool primary.
+  const existing = isBusiness
+    ? await findBusinessProfileByEmail(normalizedEmail)
+    : await findProfileByEmail(normalizedEmail)
 
   let profileId = existing?.id
   if (!profileId) {
@@ -362,23 +373,36 @@ async function findOrCreatePlatformProfile(input: {
       email: normalizedEmail,
       password: input.password,
       fullName: input.fullName,
+      source: isBusiness ? 'business' : 'primary',
     })
     profileId = sub
   }
 
-  await upsertProfile({
-    id: profileId,
-    email: normalizedEmail,
-    fullName: input.fullName,
-    avatarText: avatarFromName(input.fullName),
-    role: input.role,
-    phone: input.phone,
-    buildingId: input.buildingId,
-    businessId: input.businessId ?? null,
-    // Admin esta cargando una pwd temporal. Forzamos al usuario a cambiarla
-    // en su primer ingreso. Si el row ya existia (upsert), el flag NO se pisa.
-    passwordMustChangeOnCreate: true,
-  })
+  const avatarText = avatarFromName(input.fullName)
+
+  if (isBusiness) {
+    await upsertBusinessProfile({
+      id: profileId,
+      email: normalizedEmail,
+      fullName: input.fullName,
+      avatarText,
+      phone: input.phone,
+      businessId: input.businessId ?? null,
+      passwordMustChangeOnCreate: true,
+    })
+  } else {
+    await upsertProfile({
+      id: profileId,
+      email: normalizedEmail,
+      fullName: input.fullName,
+      avatarText,
+      role: input.role,
+      phone: input.phone,
+      buildingId: input.buildingId,
+      businessId: input.businessId ?? null,
+      passwordMustChangeOnCreate: true,
+    })
+  }
 
   return profileId
 }
