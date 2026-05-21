@@ -8,22 +8,34 @@
   "lang": "es-AR",
   "display": "standalone",
   "display_override": ["window-controls-overlay", "standalone", "browser"],
-  "background_color": "#eaeaea",
+  "background_color": "#112250",
   "theme_color": "#112250",
   "orientation": "portrait-primary",
   "categories": ["lifestyle", "business", "shopping", "productivity"],
   "icons": [
     {
-      "src": "/icon.svg?v=20260514",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/icon-192x192.png?v=20260521",
+      "sizes": "192x192",
+      "type": "image/png",
       "purpose": "any"
     },
     {
-      "src": "/icon.svg?v=20260514",
+      "src": "/icon-512x512.png?v=20260521",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon-maskable-512x512.png?v=20260521",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icon.svg?v=20260521",
       "sizes": "any",
       "type": "image/svg+xml",
-      "purpose": "maskable"
+      "purpose": "any"
     }
   ],
   "shortcuts": [

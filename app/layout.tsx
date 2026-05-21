@@ -6,7 +6,7 @@ import { PwaInit } from '@/components/pwa/pwa-init'
 import './globals.css'
 
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
-const iconVersion = '20260505'
+const iconVersion = '20260521'
 
 const montserrat = Montserrat({
   subsets: ['latin'],
@@ -91,9 +91,11 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: `/icon.svg?v=${iconVersion}`, type: 'image/svg+xml' },
+      { url: `/icon-192x192.png?v=${iconVersion}`, sizes: '192x192', type: 'image/png' },
+      { url: `/icon-512x512.png?v=${iconVersion}`, sizes: '512x512', type: 'image/png' },
     ],
-    apple: [{ url: `/icon.svg?v=${iconVersion}`, type: 'image/svg+xml' }],
-    shortcut: [`/icon.svg?v=${iconVersion}`],
+    apple: [{ url: `/apple-touch-icon.png?v=${iconVersion}`, sizes: '180x180', type: 'image/png' }],
+    shortcut: [`/apple-touch-icon.png?v=${iconVersion}`],
   },
   appleWebApp: {
     capable: true,
