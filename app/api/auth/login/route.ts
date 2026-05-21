@@ -55,6 +55,7 @@ export async function POST(req: NextRequest) {
         email: profile.email,
         fullName: profile.fullName,
         role: profile.role,
+        passwordMustChange: profile.passwordMustChange,
       },
     })
     const cookie = getAppSessionCookieDescriptor(token, expiresAtUnix, { secure: secureCookie })

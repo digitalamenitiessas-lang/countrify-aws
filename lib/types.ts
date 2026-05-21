@@ -21,6 +21,7 @@ export interface Profile {
   floor: string | null
   unit: string | null
   phone: string | null
+  passwordMustChange: boolean
   createdAt: string
 }
 

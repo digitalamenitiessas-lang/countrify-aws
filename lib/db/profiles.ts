@@ -13,6 +13,7 @@ function mapProfileRow(row: any): Profile {
     floor: row.floor ?? null,
     unit: row.unit ?? null,
     phone: row.phone ?? null,
+    passwordMustChange: row.password_must_change ?? false,
     createdAt: row.created_at,
   }
 }
@@ -44,11 +45,12 @@ export async function upsertProfile(input: {
   phone: string | null
   buildingId: string | null
   businessId: string | null
+  passwordMustChangeOnCreate?: boolean
 }): Promise<Profile> {
   const result = await pgQuery(
     `
-      insert into countrify.profiles (id, email, full_name, avatar_text, role, phone, building_id, business_id)
-      values ($1, lower($2), $3, $4, $5, $6, $7, $8)
+      insert into countrify.profiles (id, email, full_name, avatar_text, role, phone, building_id, business_id, password_must_change)
+      values ($1, lower($2), $3, $4, $5, $6, $7, $8, coalesce($9, false))
       on conflict (id) do update set
         email = excluded.email,
         full_name = excluded.full_name,
@@ -68,10 +70,51 @@ export async function upsertProfile(input: {
       input.phone,
       input.buildingId,
       input.businessId,
+      input.passwordMustChangeOnCreate ?? null,
     ],
   )
 
   return mapProfileRow(result.rows[0])
+}
+
+export async function clearPasswordMustChange(profileId: string): Promise<void> {
+  await pgQuery(
+    `update countrify.profiles set password_must_change = false where id = $1`,
+    [profileId],
+  )
+  await pgQuery(
+    `update public.profiles set password_must_change = false where id = $1`,
+    [profileId],
+  )
+}
+
+export async function markPasswordMustChange(profileId: string): Promise<void> {
+  await pgQuery(
+    `update countrify.profiles set password_must_change = true where id = $1`,
+    [profileId],
+  )
+  await pgQuery(
+    `update public.profiles set password_must_change = true where id = $1`,
+    [profileId],
+  )
+}
+
+// Busca un profile por email en ambos schemas. countrify.profiles (vecinos/
+// admins) tiene prioridad; si no aparece ahi, prueba public.profiles
+// (negocios compartidos con Citify). Devuelve tambien el "source" para que
+// el caller sepa contra que pool de Cognito setear/leer la pwd.
+export type ProfileSource = 'primary' | 'business'
+
+export async function findProfileByEmailAnySource(
+  email: string,
+): Promise<{ profile: Profile; source: ProfileSource } | null> {
+  const primary = await findProfileByEmail(email)
+  if (primary) return { profile: primary, source: 'primary' }
+
+  const business = await findBusinessProfileByEmail(email)
+  if (business) return { profile: business, source: 'business' }
+
+  return null
 }
 
 export async function findProfileById(id: string) {
@@ -101,7 +144,7 @@ export async function findProfileById(id: string) {
 const BUSINESS_PROFILE_SELECT = `
   select id, email, full_name, role, avatar_text, business_id,
          null::uuid as building_id, null::text as floor, null::text as unit,
-         phone, created_at
+         phone, password_must_change, created_at
   from public.profiles
   where role = 'negocio_admin'
     and business_id is not null

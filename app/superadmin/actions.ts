@@ -375,6 +375,9 @@ async function findOrCreatePlatformProfile(input: {
     phone: input.phone,
     buildingId: input.buildingId,
     businessId: input.businessId ?? null,
+    // Admin esta cargando una pwd temporal. Forzamos al usuario a cambiarla
+    // en su primer ingreso. Si el row ya existia (upsert), el flag NO se pisa.
+    passwordMustChangeOnCreate: true,
   })
 
   return profileId

@@ -53,7 +53,10 @@ export async function getCurrentProfile(): Promise<Profile | null> {
   return (await findProfileByEmail(appSession.email)) ?? null
 }
 
-export async function requireProfile(allowedRoles?: UserRole[]) {
+export async function requireProfile(
+  allowedRoles?: UserRole[],
+  options: { allowMustChange?: boolean } = {},
+) {
   const profile = await getCurrentProfile()
 
   if (!profile) {
@@ -62,6 +65,10 @@ export async function requireProfile(allowedRoles?: UserRole[]) {
 
   if (allowedRoles && !allowedRoles.includes(profile.role)) {
     redirect('/login')
+  }
+
+  if (profile.passwordMustChange && !options.allowMustChange) {
+    redirect('/cambiar-password?first=1')
   }
 
   return { profile }

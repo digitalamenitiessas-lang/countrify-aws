@@ -140,6 +140,31 @@ export async function adminCreateCognitoUser(input: {
   return { sub, alreadyExisted }
 }
 
+// Setea una nueva contraseña permanente para un usuario existente. Usado por
+// el flujo de magic-link reset y el cambio in-session. Acepta source para
+// elegir entre pool primary (Countrify) y business (Citify compartido).
+export async function adminSetCognitoPassword(input: {
+  email: string
+  newPassword: string
+  source?: 'primary' | 'business'
+}): Promise<void> {
+  const env = input.source === 'business' ? getBusinessCognitoEnv() : getCognitoEnv()
+  const client = getCognitoClient()
+
+  if (!env || !client) {
+    throw new Error('Cognito no esta configurado.')
+  }
+
+  await client.send(
+    new AdminSetUserPasswordCommand({
+      UserPoolId: env.userPoolId,
+      Username: input.email.trim().toLowerCase(),
+      Password: input.newPassword,
+      Permanent: true,
+    }),
+  )
+}
+
 export async function signInWithCognitoPassword(email: string, password: string) {
   const env = getCognitoEnv()
   const client = getCognitoClient()
