@@ -173,7 +173,7 @@ export async function upsertBusinessProfile(input: {
         avatar_text = excluded.avatar_text,
         phone = excluded.phone,
         business_id = excluded.business_id
-      returning *, null::uuid as building_id, null::text as floor, null::text as unit
+      returning *
     `,
     [
       input.id,
