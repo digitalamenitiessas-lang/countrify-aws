@@ -1102,15 +1102,14 @@ export function BusinessDashboard({
 
     const payload = {
       id: recordId,
-      business_id: business.id,
+      businessId: business.id,
       title: form.title,
       description: form.description,
       discount: form.discount,
       category: form.category,
-      expiration_date: form.expirationDate,
-      building_id: form.buildingId,
-      image_path: imagePath,
-      is_active: true,
+      expirationDate: form.expirationDate,
+      buildingId: form.buildingId,
+      imagePath: imagePath,
     }
 
     const response = await fetch(`/api/business/promotions?mode=${form.id ? 'update' : 'create'}`, {
