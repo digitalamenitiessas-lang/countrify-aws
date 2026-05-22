@@ -19,7 +19,7 @@ type ValidateResult = {
     | 'expired'
     | 'already_used'
     | 'promotion_unavailable'
-    | 'success'
+    | 'redeemed'
   message: string
   tokenId: string | null
   promotionId: string | null
@@ -179,7 +179,7 @@ export async function POST(req: NextRequest) {
   }
 
   return ok({
-    status: 'success',
+    status: 'redeemed',
     message: '¡Canje confirmado!',
     tokenId: token.id,
     promotionId: token.promotion_id,
