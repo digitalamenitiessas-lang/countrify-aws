@@ -4,7 +4,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import { LogOut, UserRound, Users, X } from 'lucide-react'
+import { LogOut, Settings, UserRound, Users, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   AlertDialog,
@@ -108,6 +108,11 @@ export function Navbar() {
                 <UserRound className="h-3.5 w-3.5" />
                 {userState.fullName} · <span className="font-semibold text-foreground">{ROLE_LABELS[userState.role]}</span>
               </Link>
+              <Link href="/configuracion">
+                <Button variant="ghost" size="sm" className="gap-2">
+                  <Settings className="h-4 w-4" />
+                </Button>
+              </Link>
               <Button variant="outline" size="sm" className="gap-2" onClick={() => setLogoutDialogOpen(true)}>
                 <LogOut className="h-4 w-4" />
                 Salir
@@ -163,6 +168,12 @@ export function Navbar() {
               </div>
               <Link href={ROLE_HOME[userState.role]} className="w-full" onClick={closeMobileMenu}>
                 <Button className="w-full btn-premium">Ir a mi panel</Button>
+              </Link>
+              <Link href="/configuracion" className="w-full" onClick={closeMobileMenu}>
+                <Button variant="outline" className="w-full justify-start gap-2">
+                  <Settings className="h-4 w-4" />
+                  Configuración
+                </Button>
               </Link>
               {userState.role === 'vecino' ? (
                 <>

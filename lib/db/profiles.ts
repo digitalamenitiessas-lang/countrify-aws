@@ -99,6 +99,33 @@ export async function markPasswordMustChange(profileId: string): Promise<void> {
   )
 }
 
+// Email notifications viven en ambos schemas (countrify.profiles para
+// vecinos/admins, public.profiles para business). Estos helpers branchean
+// segun donde este el profile.
+export async function getEmailNotificationsPrefs(
+  profileId: string,
+  source: 'primary' | 'business',
+): Promise<Record<string, boolean>> {
+  const table = source === 'business' ? 'public.profiles' : 'countrify.profiles'
+  const res = await pgQuery<{ email_notifications: Record<string, boolean> }>(
+    `select email_notifications from ${table} where id = $1 limit 1`,
+    [profileId],
+  )
+  return res.rows[0]?.email_notifications ?? {}
+}
+
+export async function setEmailNotificationsPrefs(
+  profileId: string,
+  source: 'primary' | 'business',
+  prefs: Record<string, boolean>,
+): Promise<void> {
+  const table = source === 'business' ? 'public.profiles' : 'countrify.profiles'
+  await pgQuery(
+    `update ${table} set email_notifications = $2::jsonb where id = $1`,
+    [profileId, JSON.stringify(prefs)],
+  )
+}
+
 // Busca un profile por email en ambos schemas. countrify.profiles (vecinos/
 // admins) tiene prioridad; si no aparece ahi, prueba public.profiles
 // (negocios compartidos con Citify). Devuelve tambien el "source" para que
