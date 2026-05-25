@@ -65,6 +65,7 @@ type WindowWithBarcodeDetector = Window & {
 }
 
 const BUSINESS_SECTION_OPTIONS: BusinessDashboardSection[] = ['home', 'promotions', 'scanner', 'history', 'profile']
+const BUSINESS_SECTION_STORAGE_KEY = 'countrify-business-section-v1'
 const BUSINESS_TOUR_STORAGE_KEY = 'countrify-business-tour-v1'
 
 const BUSINESS_TOUR_STEPS_DESKTOP: Array<{
@@ -889,10 +890,18 @@ export function BusinessDashboard({
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const rawSection = searchParams.get('section')
-  const urlSection: BusinessDashboardSection = isBusinessDashboardSection(rawSection) ? rawSection : 'home'
+  const urlSection: BusinessDashboardSection | null = isBusinessDashboardSection(rawSection) ? rawSection : null
+  const initialSection: BusinessDashboardSection = (() => {
+    if (urlSection) return urlSection
+    if (typeof window === 'undefined') return 'home'
+    const stored = window.localStorage.getItem(BUSINESS_SECTION_STORAGE_KEY)
+    return stored && (BUSINESS_SECTION_OPTIONS as string[]).includes(stored)
+      ? (stored as BusinessDashboardSection)
+      : 'home'
+  })()
   const [business, setBusiness] = useState<Business | null>(initialData.business)
   const [promotions, setPromotions] = useState<Promotion[]>(initialData.promotions)
-  const [activeSection, setActiveSection] = useState<BusinessDashboardSection>(urlSection)
+  const [activeSection, setActiveSection] = useState<BusinessDashboardSection>(initialSection)
   const [showModal, setShowModal] = useState(false)
   const [modalState, setModalState] = useState<PromotionFormState | null>(null)
   const [modalMode, setModalMode] = useState<'create' | 'edit'>('create')
@@ -914,6 +923,18 @@ export function BusinessDashboard({
   const [address, setAddress] = useState(business?.address ?? '')
   const [locationSaving, setLocationSaving] = useState(false)
   const [isLocationEditing, setIsLocationEditing] = useState(false)
+  // Centro inicial del mapa. Se calcula UNA sola vez (memoizado) para que el
+  // mapa no se re-centre cada vez que el usuario hace click → así puede
+  // arrastrar el mapa libremente y solo el marker se mueve.
+  const initialMapCenter = useMemo<[number, number]>(() => {
+    if (business?.latitude && business?.longitude) return [business.latitude, business.longitude]
+    return [-26.8306, -65.2038]
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const initialMapZoom = useMemo(() => (business?.latitude && business?.longitude ? 16 : 13), [])
+  // Cada vez que el usuario tipea una dirección y la geocodifica, queremos
+  // re-centrar explícitamente. Bumpeamos un key para forzar el efecto.
+  const [recenterToken, setRecenterToken] = useState(0)
   const tourSteps = useMemo(
     () => (isMobileViewport ? BUSINESS_TOUR_STEPS_MOBILE : BUSINESS_TOUR_STEPS_DESKTOP),
     [isMobileViewport],
@@ -962,10 +983,17 @@ export function BusinessDashboard({
   }, [tourOpen, tourStep, tourSteps])
 
   useEffect(() => {
-    if (activeSection !== urlSection) {
+    if (urlSection && activeSection !== urlSection) {
       setActiveSection(urlSection)
     }
   }, [urlSection])
+
+  // Persistir la sección activa en localStorage para que sobreviva a refreshes
+  // aunque la URL pierda el query param.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    window.localStorage.setItem(BUSINESS_SECTION_STORAGE_KEY, activeSection)
+  }, [activeSection])
 
   function closeTour(markAsSeen = true) {
     setTourOpen(false)
@@ -984,10 +1012,6 @@ export function BusinessDashboard({
   }
 
   useEffect(() => {
-    if (activeSection !== urlSection) {
-      return
-    }
-
     const params = new URLSearchParams(searchParams.toString())
     if (activeSection === 'home') {
       params.delete('section')
@@ -1159,8 +1183,10 @@ export function BusinessDashboard({
       return
     }
 
+    // La promo se desactiva, no se borra. La sacamos de la lista visible para
+    // que el dueño no la vea más, pero el histórico (canjes, métricas) queda intacto.
     setPromotions((prev) => prev.filter((promotion) => promotion.id !== id))
-    toast.success('Promocion eliminada.')
+    toast.success('Promoción desactivada.')
   }
 
   function requestDeletePromotion(id: string) {
@@ -1630,6 +1656,7 @@ export function BusinessDashboard({
                                 const data = await res.json()
                                 if (data && data.length > 0) {
                                   setMapLocation([parseFloat(data[0].lat), parseFloat(data[0].lon)])
+                                  setRecenterToken((t) => t + 1)
                                   toast.success('Ubicacion aproximada encontrada.', { id: 'geoco' })
                                 } else {
                                   toast.error('No pudimos ubicarla. Puedes marcar el punto manualmente en el mapa.', { id: 'geoco' })
@@ -1660,14 +1687,19 @@ export function BusinessDashboard({
                   <div className="flex-[1.35] overflow-hidden rounded-2xl border border-border/60 bg-background">
                     <div className="h-[320px]">
                       <DynamicMap
-                        center={mapLocation ?? [-26.8306, -65.2038]}
-                        zoom={mapLocation ? 16 : 13}
-                        interactive={isLocationEditing}
+                        center={mapLocation ?? initialMapCenter}
+                        zoom={mapLocation ? 17 : initialMapZoom}
+                        recenterKey={recenterToken}
+                        // Drag/zoom siempre habilitados (igual que el mapa
+                        // del vecino). El click para colocar marker solo
+                        // funciona si está en modo edición.
+                        interactive
                         selectedLocation={mapLocation}
-                        onLocationSelect={(lat, lng) => {
-                          if (!isLocationEditing) return
-                          setMapLocation([lat, lng])
-                        }}
+                        onLocationSelect={
+                          isLocationEditing
+                            ? (lat, lng) => setMapLocation([lat, lng])
+                            : undefined
+                        }
                       />
                     </div>
                   </div>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents, useMap } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
@@ -58,6 +58,11 @@ interface MapViewProps {
   center: [number, number]
   zoom?: number
   markers?: MapMarker[]
+  // Cuando este key cambia, el mapa se re-centra explicitamente. Sirve
+  // para que el caller pueda hacer "recenter on demand" (ej. despues de
+  // geocodificar una direccion nueva) sin perder el drag/zoom que el
+  // usuario hizo manualmente.
+  recenterKey?: number
   interactive?: boolean
   onLocationSelect?: (lat: number, lng: number) => void
   selectedLocation?: [number, number] | null
@@ -73,11 +78,35 @@ function LocationSelector({ onSelect }: { onSelect: (lat: number, lng: number) =
   return null
 }
 
-function ChangeView({ center, zoom }: { center: [number, number], zoom: number }) {
+function ChangeView({
+  center,
+  zoom,
+  recenterKey = 0,
+}: {
+  center: [number, number]
+  zoom: number
+  recenterKey?: number
+}) {
   const map = useMap()
+  const initializedRef = useRef(false)
+  const lastRecenterKeyRef = useRef(recenterKey)
+
   useEffect(() => {
-    map.setView(center, zoom)
-  }, [center, zoom, map])
+    // Primera vez: aplicar el centro/zoom inicial.
+    if (!initializedRef.current) {
+      map.setView(center, zoom)
+      initializedRef.current = true
+      lastRecenterKeyRef.current = recenterKey
+      return
+    }
+
+    // Re-centrar solo cuando el caller bumpea recenterKey.
+    if (recenterKey !== lastRecenterKeyRef.current) {
+      map.setView(center, zoom)
+      lastRecenterKeyRef.current = recenterKey
+    }
+  }, [center, zoom, recenterKey, map])
+
   return null
 }
 
@@ -85,6 +114,7 @@ export default function MapView({
   center,
   zoom = 15,
   markers = [],
+  recenterKey = 0,
   interactive = true,
   onLocationSelect,
   selectedLocation,
@@ -113,7 +143,7 @@ export default function MapView({
         dragging={interactive}
         style={{ height: '100%', width: '100%', zIndex: 1 }}
       >
-        <ChangeView center={center} zoom={zoom} />
+        <ChangeView center={center} zoom={zoom} recenterKey={recenterKey} />
         <TileLayer
           attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
           url={tileUrl}
