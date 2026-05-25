@@ -1,0 +1,116 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.gitignore'
+      - 'scripts/.**'
+  workflow_dispatch:
+
+# OIDC requiere id-token: write para que el runner reciba el JWT que asume
+# el role en AWS. contents: read es para el checkout.
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ACCOUNT_ID: '351885857894'
+  ECR_REPO: countrify/countrify-web-prod
+  IMAGE_TAG: d76b3cf
+  ECS_CLUSTER: citify-prod-cluster
+  ECS_SERVICE: countrify-prod-service
+
+jobs:
+  deploy:
+    name: Build, push, deploy a prod
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::351885857894:role/countrify-github-actions-deploy
+          role-session-name: github-actions-${{ github.run_id }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # Tag fijo (igual que Citify): la task def referencia este tag
+          # y ECS hace pull on each task start, asi que basta con
+          # force-new-deployment despues del push.
+          tags: ${{ env.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${{ env.ECR_REPO }}:${{ env.IMAGE_TAG }}
+          build-args: |
+            NEXT_PUBLIC_VAPID_PUBLIC_KEY=BBx3RGzhBHLp4KcuTrNIg5jBJ_m3la30U-yDA0YHr5uRttZshB7QOIIg6mrWS-fxaIOrmQCr5QkF_2OHwbBh3tI
+            OPENROUTER_MODEL=openai/gpt-4o-mini
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Force ECS new deployment
+        id: deploy
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_ID=$(aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment \
+            --region "$AWS_REGION" \
+            --query 'service.deployments[0].id' --output text)
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+          echo "Triggered deployment: $DEPLOYMENT_ID"
+
+      - name: Wait for service stable
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --region "$AWS_REGION"
+          echo "Service stable"
+
+      - name: Verify running digest
+        run: |
+          TASK_ARN=$(aws ecs list-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --service-name "$ECS_SERVICE" \
+            --region "$AWS_REGION" \
+            --query 'taskArns[0]' --output text)
+          DIGEST=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --region "$AWS_REGION" \
+            --query 'tasks[0].containers[0].imageDigest' --output text)
+          echo "Running digest: $DIGEST"
+          echo "## Deploy summary" >> $GITHUB_STEP_SUMMARY
+          echo "- Image tag: \`${{ env.IMAGE_TAG }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Running digest: \`$DIGEST\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" https://countrify.com.ar/)
+          echo "GET / -> $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Landing returned $HTTP_CODE (expected 200)"
+            exit 1
+          fi
