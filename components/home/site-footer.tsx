@@ -38,9 +38,14 @@ export function SiteFooter() {
           </span>
         </div>
       </div>
-      <p className="border-t border-white/10 px-6 py-2 text-center text-[11px] text-white/50 md:hidden">
-        Desarrollado por Digital Amenities
-      </p>
+      <div className="border-t border-white/10 px-6 py-2 flex flex-col gap-1 md:flex-row md:items-center md:justify-between text-[11px] text-white/50">
+        <p className="text-center md:hidden">Desarrollado por Digital Amenities</p>
+        <nav className="flex flex-wrap justify-center gap-x-4 gap-y-1 md:justify-start">
+          <Link href="/legal/terminos" className="hover:text-white/80 transition">Términos</Link>
+          <Link href="/legal/privacidad" className="hover:text-white/80 transition">Privacidad</Link>
+          <Link href="/legal/cookies" className="hover:text-white/80 transition">Cookies</Link>
+        </nav>
+      </div>
     </footer>
   )
 }
