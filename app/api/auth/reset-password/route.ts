@@ -3,6 +3,7 @@ import crypto from 'node:crypto'
 import { pgQuery } from '@/lib/db/postgres'
 import { adminSetCognitoPassword, isCognitoConfigured } from '@/lib/aws/cognito'
 import { clearPasswordMustChange, findProfileByEmailAnySource } from '@/lib/db/profiles'
+import { getClientIp, rateLimitResponse } from '@/lib/rate-limit'
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex')
@@ -15,6 +16,13 @@ function validatePassword(pwd: string): string | null {
 }
 
 export async function POST(request: NextRequest) {
+  // Rate limit por IP: 10 intentos por minuto. El token ya es 32-byte
+  // random + hasheado, asi que brute force es imposible — esto es solo
+  // para evitar abuso del endpoint.
+  const ip = getClientIp(request.headers)
+  const limited = rateLimitResponse(`auth:reset:${ip}`, { max: 10, windowSeconds: 60 })
+  if (limited) return limited
+
   const body = (await request.json().catch(() => null)) as
     | { token?: string; password?: string }
     | null

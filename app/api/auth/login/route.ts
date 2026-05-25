@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { signInWithCognitoFallback } from '@/lib/aws/cognito'
 import { findBusinessProfileByEmail, findProfileByEmail } from '@/lib/db/profiles'
 import { createSessionToken, getAppSessionCookieDescriptor } from '@/lib/auth/session'
+import { getClientIp, rateLimitResponse } from '@/lib/rate-limit'
 
 type LoginBody = {
   email?: string
@@ -9,6 +10,11 @@ type LoginBody = {
 }
 
 export async function POST(req: NextRequest) {
+  // Rate limit por IP: 10 intentos por minuto. Evita brute force.
+  const ip = getClientIp(req.headers)
+  const limited = rateLimitResponse(`auth:login:${ip}`, { max: 10, windowSeconds: 60 })
+  if (limited) return limited
+
   let body: LoginBody
 
   try {
