@@ -1,20 +1,71 @@
+import { ScopedToBuildingBanner } from '@/components/admin-backoffice/shell/scoped-to-building-banner'
+import { CobranzaMesView } from '@/components/admin-backoffice/cobranzas/cobranza-mes-view'
 import { requireIAdmin } from '@/lib/auth'
+import { getIAdminLiquidationRunDetail, getIAdminPortfolio } from '@/lib/data'
+import { pgQuery } from '@/lib/db/postgres'
 
-export default async function CobranzasPage() {
-  await requireIAdmin({ capability: 'collections.view' })
+export default async function CobranzasPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ propertyId?: string }>
+}) {
+  const { context } = await requireIAdmin({ capability: 'collections.view' })
+
+  const { propertyId } = await searchParams
+  const administrationId = context.primary?.administration.id
+  const portfolio = administrationId ? await getIAdminPortfolio(administrationId) : null
+  const scopedProperty = propertyId
+    ? portfolio?.properties.find((p) => p.id === propertyId) ?? null
+    : null
+
+  let runDetail: Awaited<ReturnType<typeof getIAdminLiquidationRunDetail>> = null
+  if (scopedProperty) {
+    const latestRun = await pgQuery<{ id: string }>(
+      `select id from countrify.iadmin_liquidation_runs
+        where managed_property_id = $1 and status in ('issued', 'closed')
+        order by generated_at desc
+        limit 1`,
+      [scopedProperty.id],
+    )
+    const runId = latestRun.rows[0]?.id
+    if (runId) {
+      runDetail = await getIAdminLiquidationRunDetail(runId)
+    }
+  }
 
   return (
     <div className="space-y-4">
       <header className="glass-card rounded-2xl p-6">
         <p className="text-xs uppercase tracking-wider text-primary font-medium">Cobranzas</p>
-        <h1 className="font-serif text-2xl font-bold text-foreground mt-1">Cobranzas y deuda</h1>
+        <h1 className="font-serif text-2xl font-bold text-foreground mt-1">
+          {scopedProperty ? `Cobranzas · ${scopedProperty.displayName ?? scopedProperty.buildingName}` : 'Cobranzas y deuda'}
+        </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Conciliacion de pagos contra liquidaciones emitidas.
+          {scopedProperty
+            ? 'Estado de cobranza del último mes emitido. Quién pagó, quién pagó tarde, quién está en deuda.'
+            : 'Conciliacion de pagos contra liquidaciones emitidas.'}
         </p>
       </header>
-      <div className="glass-card rounded-2xl p-8 text-sm text-muted-foreground">
-        El modulo de cobranzas esta modelado (iadmin_payments + iadmin_bank_movements) y se desarrolla en la fase 4.
-      </div>
+      {scopedProperty ? (
+        <ScopedToBuildingBanner
+          propertyName={scopedProperty.displayName ?? scopedProperty.buildingName}
+          basePath="/iadmin/cobranzas"
+        />
+      ) : null}
+
+      {scopedProperty ? (
+        runDetail ? (
+          <CobranzaMesView run={runDetail} />
+        ) : (
+          <div className="glass-card rounded-2xl p-8 text-sm text-muted-foreground text-center">
+            Este edificio todavía no tiene una liquidación emitida. Andá a Resumen → "Liquidar y enviar" para emitir la del mes.
+          </div>
+        )
+      ) : (
+        <div className="glass-card rounded-2xl p-8 text-sm text-muted-foreground">
+          Vista cross-cartera de cobranzas en desarrollo. Por ahora, entrá a un edificio para ver su estado de cobranza del mes.
+        </div>
+      )}
     </div>
   )
 }
