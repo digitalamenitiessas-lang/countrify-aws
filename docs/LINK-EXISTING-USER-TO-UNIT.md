@@ -2,6 +2,15 @@
 
 Documento de implementación para cerrar el hueco entre **superadmin crea usuario** e **iadmin lo asigna a una unidad**. Pensado para que pueda implementarse en paralelo en Countrify y Citify (mismo modelo de datos, mismos nombres de tabla en ambos lados).
 
+> **Estado al 2026-05-26:**
+> - ✅ **Countrify**: implementado en commit `ed07941`. Las 4 piezas (query
+>   `listLinkableProfilesByBuildingFromPostgres`, helper
+>   `getIAdminLinkableProfiles`, action `linkExistingProfileToUnit`, UI en
+>   `units-manager.tsx`) están en producción.
+> - ⏳ **Citify**: pendiente de implementar. Esta spec sigue siendo el
+>   contrato para el port — solo cambiar `countrify.*` por el schema
+>   de Citify.
+
 ## Contexto
 
 Flujo objetivo:
@@ -17,15 +26,15 @@ crea profile      →     ve lista de vecinos del         →    ve "Mi unidad"
 
 ## Estado actual
 
-| Pieza | Estado | Referencia |
-|---|---|---|
-| Superadmin crea usuario con `buildingId` | OK | `app/superadmin/actions.ts` → `createPlatformUser` |
-| Iadmin ve unidades del consorcio | OK | `app/iadmin/consorcios/[id]/gestion/page.tsx` → `getIAdminUnitsWithHolders` |
-| Iadmin **ve vecinos del building disponibles para vincular** | **FALTA** | — |
-| Iadmin vincula vecino existente | parcial — solo si tipea el email exacto en el form de creación; `ensureProfileForUnit` hace `findProfileByEmail` y reusa silenciosamente | `app/iadmin/consorcios/[id]/actions.ts` → `createUnitUser` |
-| Vecino ve su unidad | OK | `components/dashboards/consumer-dashboard.tsx` |
+| Pieza | Countrify | Citify | Referencia |
+|---|---|---|---|
+| Superadmin crea usuario con `buildingId` | ✅ | ✅ | `app/superadmin/actions.ts` → `createPlatformUser` |
+| Iadmin ve unidades del consorcio | ✅ | ✅ | `app/iadmin/consorcios/[id]/gestion/page.tsx` → `getIAdminUnitsWithHolders` |
+| Iadmin **ve vecinos del building disponibles para vincular** | ✅ (commit `ed07941`) | ⏳ pendiente | `lib/db/iadmin-reads.ts` → `listLinkableProfilesByBuildingFromPostgres` |
+| Iadmin vincula vecino existente | ✅ (commit `ed07941`) | parcial — solo si tipea el email exacto en el form de creación | `app/iadmin/consorcios/[id]/actions.ts` → `linkExistingProfileToUnit` (Countrify) / `createUnitUser` (Citify) |
+| Vecino ve su unidad | ✅ | ✅ | `components/dashboards/consumer-dashboard.tsx` |
 
-El único eslabón roto: el iadmin no tiene un selector de "profiles existentes del building todavía sin membership".
+En Countrify cerrado. En Citify sigue faltando el selector de "profiles existentes del building todavía sin membership".
 
 ## Modelo de datos relevante
 
