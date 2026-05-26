@@ -1261,7 +1261,7 @@ export async function updateIAdminProviderInPostgres(
 
 export async function insertIAdminAuditLogInPostgres(input: {
   administrationId: string
-  actorProfileId: string
+  actorProfileId: string | null
   entityType: string
   entityId: string | null
   action: string
