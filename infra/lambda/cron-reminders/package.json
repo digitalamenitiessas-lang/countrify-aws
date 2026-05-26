@@ -1,0 +1,9 @@
+{
+  "name": "countrify-cron-reminders",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.mjs",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.0.0"
+  }
+}
