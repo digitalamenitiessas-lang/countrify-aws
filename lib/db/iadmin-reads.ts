@@ -1416,9 +1416,9 @@ export async function listLinkableProfilesByBuildingFromPostgres(
         group by profile_id
       ) m on m.profile_id = p.id
       where p.role in ('vecino', 'propietario')
+        and (p.building_id = $1 or p.building_id is null)
       order by
         (p.building_id = $1) desc,
-        (p.building_id is null) desc,
         coalesce(m.active_count, 0) asc,
         p.full_name asc
     `,
