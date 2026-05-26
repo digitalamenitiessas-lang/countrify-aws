@@ -1,10 +1,18 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { runAIChat, stripJsonFences } from '@/lib/iadmin/ai-chat'
-import { getIAdminAdministrationByIdFromPostgres } from '@/lib/db/iadmin-core'
+import { getIAdminAdministrationByIdFromPostgres, insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import { getManagedPropertyContextFromPostgres } from '@/lib/db/iadmin-writes'
+import {
+  deleteAnnouncementInPostgres,
+  getAnnouncementAdminContextFromPostgres,
+  insertAnnouncementInPostgres,
+  updateAnnouncementInPostgres,
+} from '@/lib/db/announcements'
+import { pgQuery } from '@/lib/db/postgres'
 
 const draftSchema = z.object({
   administrationId: z.string().uuid(),
@@ -102,4 +110,140 @@ Generá las 3 versiones como JSON.`
   }
 
   return result.data
+}
+
+// ----------------------------------------------------------------------------
+// Publish / edit / delete announcements. El admin compone con o sin AI y
+// despues publica: persistimos comunicado + audit log. Email a vecinos se
+// engancha en Checkpoint 2.
+// ----------------------------------------------------------------------------
+
+const publishSchema = z.object({
+  buildingId: z.string().uuid(),
+  title: z.string().trim().min(3).max(200),
+  body: z.string().trim().min(5).max(8000),
+  pinned: z.boolean().optional().default(false),
+  expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+})
+
+async function assertAdminOwnsBuilding(buildingId: string): Promise<{
+  administrationId: string
+  profileId: string
+}> {
+  const res = await pgQuery<{ administration_id: string }>(
+    `select mp.administration_id
+       from countrify.iadmin_managed_properties mp
+      where mp.building_id = $1
+      limit 1`,
+    [buildingId],
+  )
+  const administrationId = res.rows[0]?.administration_id
+  if (!administrationId) {
+    throw new Error('El edificio no esta asociado a una administracion.')
+  }
+  const { profile } = await requireIAdmin({
+    capability: 'communications.send',
+    administrationId,
+  })
+  return { administrationId, profileId: profile.id }
+}
+
+export async function publishAnnouncement(input: z.input<typeof publishSchema>) {
+  const parsed = publishSchema.parse(input)
+  const { administrationId, profileId } = await assertAdminOwnsBuilding(parsed.buildingId)
+
+  const expiresAt = parsed.expiresAt
+    ? new Date(`${parsed.expiresAt}T23:59:59-03:00`).toISOString()
+    : null
+
+  const { id } = await insertAnnouncementInPostgres({
+    buildingId: parsed.buildingId,
+    authorProfileId: profileId,
+    title: parsed.title,
+    body: parsed.body,
+    pinned: parsed.pinned ?? false,
+    expiresAt,
+  })
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId,
+    actorProfileId: profileId,
+    entityType: 'building_announcements',
+    entityId: id,
+    action: 'announcement.published',
+    metadata: { building_id: parsed.buildingId, title: parsed.title, pinned: parsed.pinned ?? false },
+  })
+
+  revalidatePath('/iadmin/comunicaciones')
+  revalidatePath('/usuario')
+  return { id }
+}
+
+const updateSchema = z.object({
+  id: z.string().uuid(),
+  title: z.string().trim().min(3).max(200),
+  body: z.string().trim().min(5).max(8000),
+  pinned: z.boolean().optional().default(false),
+  expiresAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+})
+
+export async function updateAnnouncement(input: z.input<typeof updateSchema>) {
+  const parsed = updateSchema.parse(input)
+  const ctx = await getAnnouncementAdminContextFromPostgres(parsed.id)
+  if (!ctx) throw new Error('Comunicado no encontrado.')
+
+  const { profile } = await requireIAdmin({
+    capability: 'communications.send',
+    administrationId: ctx.administration_id,
+  })
+
+  const expiresAt = parsed.expiresAt
+    ? new Date(`${parsed.expiresAt}T23:59:59-03:00`).toISOString()
+    : null
+
+  await updateAnnouncementInPostgres({
+    id: parsed.id,
+    title: parsed.title,
+    body: parsed.body,
+    pinned: parsed.pinned ?? false,
+    expiresAt,
+  })
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: ctx.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'building_announcements',
+    entityId: parsed.id,
+    action: 'announcement.updated',
+    metadata: { title: parsed.title, pinned: parsed.pinned ?? false },
+  })
+
+  revalidatePath('/iadmin/comunicaciones')
+  revalidatePath('/usuario')
+  return { ok: true }
+}
+
+export async function deleteAnnouncement(id: string) {
+  const ctx = await getAnnouncementAdminContextFromPostgres(id)
+  if (!ctx) throw new Error('Comunicado no encontrado.')
+
+  const { profile } = await requireIAdmin({
+    capability: 'communications.send',
+    administrationId: ctx.administration_id,
+  })
+
+  await deleteAnnouncementInPostgres(id)
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: ctx.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'building_announcements',
+    entityId: id,
+    action: 'announcement.deleted',
+    metadata: {},
+  })
+
+  revalidatePath('/iadmin/comunicaciones')
+  revalidatePath('/usuario')
+  return { ok: true }
 }
