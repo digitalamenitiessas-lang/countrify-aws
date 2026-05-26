@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { ConsorcioDetail } from '@/components/admin-backoffice/consorcio/consorcio-detail'
 import { findMembership, requireIAdmin } from '@/lib/auth'
-import { getIAdminConsorcioDetail, getIAdminUnitsWithHolders } from '@/lib/data'
+import { getIAdminConsorcioDetail, getIAdminLinkableProfiles, getIAdminUnitsWithHolders } from '@/lib/data'
 import { IADMIN_CAPABILITIES } from '@/lib/iadmin/capabilities'
 import type { IAdminCapability } from '@/lib/types'
 
@@ -18,6 +18,8 @@ export default async function ConsorcioDetailPage({ params }: { params: Promise<
     notFound()
   }
 
+  const linkableProfiles = await getIAdminLinkableProfiles(detail.property.buildingId)
+
   const capabilities: IAdminCapability[] = context.isSuperAdmin
     ? IADMIN_CAPABILITIES.slice()
     : (findMembership(context, detail.property.administrationId)?.capabilities ?? [])
@@ -26,6 +28,7 @@ export default async function ConsorcioDetailPage({ params }: { params: Promise<
     <ConsorcioDetail
       property={detail.property}
       units={unitsWithHolders}
+      linkableProfiles={linkableProfiles}
       recentExpenses={detail.recentExpenses}
       currentPeriod={detail.currentPeriod}
       buildingInformation={detail.buildingInformation}

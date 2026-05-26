@@ -5,7 +5,7 @@ import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import type { UnitProfileRelationship, UserRole } from '@/lib/types'
 import { adminCreateCognitoUser } from '@/lib/aws/cognito'
-import { findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
+import { findProfileById, findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
 import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import {
   changeAccountingPeriodStatusInPostgres,
@@ -495,6 +495,86 @@ export async function createUnitUser(input: z.input<typeof createUnitUserSchema>
 
   revalidatePath(`/iadmin/consorcios/${scope.managedPropertyId}`)
   return { profileId: targetProfileId }
+}
+
+const linkExistingProfileSchema = z.object({
+  unitId: z.string().uuid(),
+  profileId: z.string().uuid(),
+  relationshipType: z.enum(['propietario', 'vecino_principal', 'vecino_adicional']),
+  isPrimaryOwner: z.boolean().optional().default(false),
+})
+
+export async function linkExistingProfileToUnit(input: z.input<typeof linkExistingProfileSchema>) {
+  const parsed = linkExistingProfileSchema.parse(input)
+
+  const scope = await getUnitFullScopeFromPostgres(parsed.unitId)
+  if (!scope) throw new Error('Unidad no encontrada')
+
+  const { profile: actor } = await requireIAdmin({
+    capability: 'holders.manage',
+    administrationId: scope.administrationId,
+  })
+
+  const target = await findProfileById(parsed.profileId)
+  if (!target) throw new Error('Vecino no encontrado')
+  if (target.buildingId !== scope.buildingId) {
+    throw new Error('El vecino no pertenece a este consorcio')
+  }
+  if (target.role !== 'vecino' && target.role !== 'propietario') {
+    throw new Error('Solo se pueden vincular vecinos o propietarios')
+  }
+
+  if (parsed.relationshipType === 'vecino_principal') {
+    await deactivateActivePrincipalMembershipsInPostgres(scope.unitId)
+  }
+
+  const existing = await findUnitProfileMembershipFromPostgres({
+    unitId: scope.unitId,
+    profileId: parsed.profileId,
+    relationshipType: parsed.relationshipType,
+  })
+
+  await upsertUnitProfileMembershipInPostgres({
+    membershipId: existing?.id ?? null,
+    unitId: scope.unitId,
+    buildingId: scope.buildingId,
+    profileId: parsed.profileId,
+    relationshipType: parsed.relationshipType,
+    isPrimary: parsed.relationshipType === 'propietario' ? parsed.isPrimaryOwner : false,
+    createdByProfileId: actor.id,
+  })
+
+  if (parsed.relationshipType === 'propietario') {
+    const existingHolder = await findOwnerHolderForProfileFromPostgres({
+      unitId: scope.unitId,
+      profileId: parsed.profileId,
+    })
+    if (!existingHolder) {
+      await insertOwnerHolderInPostgres({
+        unitId: scope.unitId,
+        profileId: parsed.profileId,
+        fullName: target.fullName,
+        email: target.email.toLowerCase(),
+        phone: target.phone ?? null,
+      })
+    }
+  }
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: scope.administrationId,
+    actorProfileId: actor.id,
+    entityType: 'unit_profile_memberships',
+    entityId: scope.unitId,
+    action: 'unit_user.linked_existing',
+    metadata: {
+      unit_code: scope.unitCode,
+      profile_id: parsed.profileId,
+      relationship_type: parsed.relationshipType,
+    },
+  })
+
+  revalidatePath(`/iadmin/consorcios/${scope.managedPropertyId}`)
+  return { profileId: parsed.profileId }
 }
 
 const deactivateUnitMembershipSchema = z.object({

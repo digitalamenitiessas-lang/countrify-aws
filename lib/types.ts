@@ -839,6 +839,15 @@ export interface IAdminUnitWithHolders extends IAdminUnit {
   memberships: UnitProfileMembership[]
 }
 
+export type IAdminLinkableProfile = {
+  id: string
+  email: string
+  fullName: string
+  role: 'vecino' | 'propietario'
+  phone: string | null
+  activeMembershipsCount: number
+}
+
 export type IAdminCashAccountKind = 'bank' | 'cash' | 'reserve' | 'other'
 
 export type IAdminMovementKind =

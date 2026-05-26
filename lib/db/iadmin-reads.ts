@@ -1382,6 +1382,43 @@ export async function listMembershipsWithProfileByUnitsFromPostgres(
   return result.rows
 }
 
+export type LinkableProfileRow = {
+  id: string
+  email: string
+  full_name: string
+  role: 'vecino' | 'propietario'
+  phone: string | null
+  active_memberships_count: number
+}
+
+export async function listLinkableProfilesByBuildingFromPostgres(
+  buildingId: string,
+): Promise<LinkableProfileRow[]> {
+  const result = await pgQuery<LinkableProfileRow>(
+    `
+      select
+        p.id,
+        p.email,
+        p.full_name,
+        p.role::text as role,
+        p.phone,
+        coalesce(m.active_count, 0)::int as active_memberships_count
+      from countrify.profiles p
+      left join (
+        select profile_id, count(*)::int as active_count
+        from countrify.unit_profile_memberships
+        where building_id = $1 and active = true
+        group by profile_id
+      ) m on m.profile_id = p.id
+      where p.building_id = $1
+        and p.role in ('vecino', 'propietario')
+      order by coalesce(m.active_count, 0) asc, p.full_name asc
+    `,
+    [buildingId],
+  )
+  return result.rows
+}
+
 export async function getExpensePaymentInfoFromPostgres(
   expenseId: string,
 ): Promise<ExpensePaymentRow | null> {

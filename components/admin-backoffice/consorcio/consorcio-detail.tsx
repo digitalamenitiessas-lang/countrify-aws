@@ -6,6 +6,7 @@ import type {
   IAdminCapability,
   IAdminExpenseStatus,
   IAdminExpenseSummary,
+  IAdminLinkableProfile,
   IAdminManagedProperty,
   IAdminUnitWithHolders,
 } from '@/lib/types'
@@ -37,6 +38,7 @@ const EXPENSE_STATUS_TONE: Record<IAdminExpenseStatus, string> = {
 type Props = {
   property: IAdminManagedProperty
   units: IAdminUnitWithHolders[]
+  linkableProfiles: IAdminLinkableProfile[]
   recentExpenses: IAdminExpenseSummary[]
   currentPeriod: IAdminAccountingPeriod | null
   buildingInformation: BuildingInformationItem[]
@@ -44,7 +46,7 @@ type Props = {
   userCapabilities: IAdminCapability[]
 }
 
-export function ConsorcioDetail({ property, units, recentExpenses, currentPeriod, buildingInformation, totals, userCapabilities }: Props) {
+export function ConsorcioDetail({ property, units, linkableProfiles, recentExpenses, currentPeriod, buildingInformation, totals, userCapabilities }: Props) {
   const caps = new Set(userCapabilities)
   const canEditConsorcio = caps.has('consorcio.edit')
   const canEditLegal = caps.has('consorcio.legal.edit')
@@ -144,6 +146,7 @@ export function ConsorcioDetail({ property, units, recentExpenses, currentPeriod
         <UnitsManager
           propertyId={property.id}
           units={units}
+          linkableProfiles={linkableProfiles}
           canManageUnits={canManageUnits}
           canManageHolders={canManageHolders}
         />

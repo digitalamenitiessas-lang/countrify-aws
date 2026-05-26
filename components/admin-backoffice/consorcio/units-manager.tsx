@@ -16,7 +16,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import type { IAdminHolderKind, IAdminUnitKind, IAdminUnitWithHolders } from '@/lib/types'
+import type { IAdminHolderKind, IAdminLinkableProfile, IAdminUnitKind, IAdminUnitWithHolders } from '@/lib/types'
 import {
   createUnitUser,
   createUnit,
@@ -24,12 +24,14 @@ import {
   deactivateUnitMembership,
   deactivateUnit,
   endUnitHolder,
+  linkExistingProfileToUnit,
   updateUnit,
 } from '@/app/iadmin/consorcios/[id]/actions'
 
 type Props = {
   propertyId: string
   units: IAdminUnitWithHolders[]
+  linkableProfiles: IAdminLinkableProfile[]
   canManageUnits: boolean
   canManageHolders: boolean
 }
@@ -105,7 +107,7 @@ function parseDraft(draft: UnitDraft) {
   }
 }
 
-export function UnitsManager({ propertyId, units, canManageUnits, canManageHolders }: Props) {
+export function UnitsManager({ propertyId, units, linkableProfiles, canManageUnits, canManageHolders }: Props) {
   const [pending, startTransition] = useTransition()
   const [confirmAction, setConfirmAction] = useState<UnitsConfirmAction | null>(null)
   const [creating, setCreating] = useState(false)
@@ -130,6 +132,13 @@ export function UnitsManager({ propertyId, units, canManageUnits, canManageHolde
     email: '',
     phone: '',
     password: 'Countrify2026!',
+    isPrimaryOwner: true,
+  })
+  const [userFormMode, setUserFormMode] = useState<'link' | 'create'>('link')
+  const [linkDraft, setLinkDraft] = useState({
+    profileId: '',
+    search: '',
+    relationshipType: 'propietario' as (typeof UNIT_USER_OPTIONS)[number]['value'],
     isPrimaryOwner: true,
   })
 
@@ -248,7 +257,36 @@ export function UnitsManager({ propertyId, units, canManageUnits, canManageHolde
       password: 'Countrify2026!',
       isPrimaryOwner: true,
     })
+    setLinkDraft({
+      profileId: '',
+      search: '',
+      relationshipType: 'propietario',
+      isPrimaryOwner: true,
+    })
+    setUserFormMode(linkableProfiles.length > 0 ? 'link' : 'create')
     setAddingUserFor(null)
+  }
+
+  function submitLinkExisting(event: React.FormEvent<HTMLFormElement>, unitId: string) {
+    event.preventDefault()
+    if (!linkDraft.profileId) {
+      toast.error('Eligi un vecino del listado')
+      return
+    }
+    startTransition(async () => {
+      try {
+        await linkExistingProfileToUnit({
+          unitId,
+          profileId: linkDraft.profileId,
+          relationshipType: linkDraft.relationshipType,
+          isPrimaryOwner: linkDraft.isPrimaryOwner,
+        })
+        toast.success('Vecino vinculado a la unidad')
+        resetUserDraft()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Error')
+      }
+    })
   }
 
   function submitUnitUser(event: React.FormEvent<HTMLFormElement>, unitId: string) {
@@ -553,7 +591,14 @@ export function UnitsManager({ propertyId, units, canManageUnits, canManageHolde
                             </p>
                           </div>
                           {canManageHolders && !isAddingUser ? (
-                            <Button size="sm" variant="outline" onClick={() => setAddingUserFor(unit.id)}>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => {
+                                setUserFormMode(linkableProfiles.length > 0 ? 'link' : 'create')
+                                setAddingUserFor(unit.id)
+                              }}
+                            >
                               <UserPlus className="w-3.5 h-3.5 mr-1" />
                               Agregar usuario
                             </Button>
@@ -594,7 +639,88 @@ export function UnitsManager({ propertyId, units, canManageUnits, canManageHolde
                         )}
 
                         {isAddingUser ? (
-                          <form onSubmit={(e) => submitUnitUser(e, unit.id)} className="mt-3 space-y-3 rounded-lg border border-border/40 p-3">
+                          <div className="mt-3 rounded-lg border border-border/40 p-3 space-y-3">
+                            <div className="flex gap-2 text-xs">
+                              <button
+                                type="button"
+                                onClick={() => setUserFormMode('link')}
+                                disabled={linkableProfiles.length === 0}
+                                className={`px-3 py-1.5 rounded-md border ${userFormMode === 'link' ? 'bg-primary text-primary-foreground border-primary' : 'border-border/40 text-muted-foreground'} disabled:opacity-40`}
+                              >
+                                Vincular vecino existente ({linkableProfiles.length})
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setUserFormMode('create')}
+                                className={`px-3 py-1.5 rounded-md border ${userFormMode === 'create' ? 'bg-primary text-primary-foreground border-primary' : 'border-border/40 text-muted-foreground'}`}
+                              >
+                                Crear nuevo
+                              </button>
+                            </div>
+
+                            {userFormMode === 'link' ? (
+                              <form onSubmit={(e) => submitLinkExisting(e, unit.id)} className="space-y-3">
+                                <div className="space-y-1.5">
+                                  <Label>Buscar vecino</Label>
+                                  <Input
+                                    placeholder="Nombre o email"
+                                    value={linkDraft.search}
+                                    onChange={(e) => setLinkDraft({ ...linkDraft, search: e.target.value })}
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Label>Vecino</Label>
+                                  <select
+                                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    value={linkDraft.profileId}
+                                    onChange={(e) => setLinkDraft({ ...linkDraft, profileId: e.target.value })}
+                                    required
+                                  >
+                                    <option value="">Seleccionar vecino...</option>
+                                    {linkableProfiles
+                                      .filter((p) => {
+                                        const q = linkDraft.search.trim().toLowerCase()
+                                        if (!q) return true
+                                        return p.fullName.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
+                                      })
+                                      .map((p) => (
+                                        <option key={p.id} value={p.id}>
+                                          {p.fullName} · {p.email} · {p.activeMembershipsCount === 0 ? 'sin unidad' : `${p.activeMembershipsCount} unidad(es)`}
+                                        </option>
+                                      ))}
+                                  </select>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  <div className="space-y-1.5">
+                                    <Label>Tipo de vinculo</Label>
+                                    <select
+                                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                      value={linkDraft.relationshipType}
+                                      onChange={(e) => setLinkDraft({ ...linkDraft, relationshipType: e.target.value as typeof linkDraft.relationshipType })}
+                                    >
+                                      {UNIT_USER_OPTIONS.map((opt) => (
+                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                  {linkDraft.relationshipType === 'propietario' ? (
+                                    <label className="flex items-center gap-2 text-xs text-muted-foreground self-end pb-2">
+                                      <input
+                                        type="checkbox"
+                                        checked={linkDraft.isPrimaryOwner}
+                                        onChange={(e) => setLinkDraft({ ...linkDraft, isPrimaryOwner: e.target.checked })}
+                                      />
+                                      Propietario principal de la unidad
+                                    </label>
+                                  ) : null}
+                                </div>
+                                <div className="flex justify-end gap-2">
+                                  <Button type="button" size="sm" variant="ghost" onClick={resetUserDraft}>Cancelar</Button>
+                                  <Button type="submit" size="sm" disabled={pending}>Vincular</Button>
+                                </div>
+                              </form>
+                            ) : (
+                          <form onSubmit={(e) => submitUnitUser(e, unit.id)} className="space-y-3">
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div className="space-y-1.5">
                                 <Label>Tipo de vinculo</Label>
@@ -640,6 +766,8 @@ export function UnitsManager({ propertyId, units, canManageUnits, canManageHolde
                               <Button type="submit" size="sm" disabled={pending}>Crear y vincular</Button>
                             </div>
                           </form>
+                            )}
+                          </div>
                         ) : null}
                       </div>
                     </div>
