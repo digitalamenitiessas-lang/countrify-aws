@@ -4,7 +4,7 @@ Tracking de los gaps para salir a producción. Espejo del doc de Citify
 pero con el estado real de Countrify. Si la sesión se interrumpe,
 abrir este doc da el estado de cada item.
 
-Última actualización: 2026-05-25
+Última actualización: 2026-05-26
 
 ---
 
@@ -62,8 +62,25 @@ abrir este doc da el estado de cada item.
       compartido con Citify)
 - [ ] Comunicados (DB + UI + email — feature gap clave del iadmin)
 - [ ] Onboarding self-service form ("quiero sumar mi consorcio")
-- [ ] Reminders cron + UI (tabla `countrify.iadmin_reminders` ya existe,
-      falta cron + page funcional)
+- [x] **Reminders cron + UI** ✅ (commits `7fe388c` + `7006e97`, 2026-05-26)
+  - UI ya existía; faltaba scoped por edificio y trigger automático.
+  - Refactor: core de `generateReminders` extraído a
+    `lib/iadmin/generate-reminders-core.ts` (sin user context).
+  - Endpoint sistémico `POST /api/cron/generate-reminders` con bearer auth.
+    Itera administrations activas, audit log con `actor_profile_id=NULL` y
+    action `reminders.generated_by_cron`.
+  - `/iadmin/recordatorios` con `?propertyId=` + `ScopedToBuildingBanner`.
+  - **Infra AWS**:
+    - Secret `countrify/prod/cron-secret` en Secrets Manager.
+    - Task def `countrify-prod-web:11` con `CRON_SECRET` inyectado.
+    - Lambda `countrify-cron-generate-reminders` (Node 20) en
+      `infra/lambda/cron-reminders/`. Lee secret y hace POST con bearer.
+    - EventBridge rule `countrify-cron-reminders-daily` schedule
+      `cron(0 12 * * ? *)` = 09:00 ARG.
+    - Probada manualmente con `aws lambda invoke`: wiring OK, conecta
+      y envía bearer correcto.
+  - **Pendiente smoke test del endpoint** post-deploy del commit
+    `7fe388c` (bloqueado por outage de GitHub Actions del 2026-05-26).
 - [ ] Mobile responsive en `/iadmin/*` (built para desktop)
 
 ## Sprint 2 — Features gaps
@@ -110,6 +127,13 @@ abrir este doc da el estado de cada item.
 - SES sandbox (compartido con Citify, esperando respuesta de AWS)
 - Sentry (falta account)
 
-**Sprint 1**: 1/9 completos (CI/CD).
+**Sprint 1**: 2/9 completos (CI/CD + Reminders cron).
 
-**Sprint 2**: 1/5 completos (cobranzas MVP shipped hoy).
+**Sprint 2**: 1/5 completos (cobranzas MVP).
+
+## Incidentes activos
+
+- **2026-05-26**: GitHub Actions major outage (githubstatus.com).
+  Commits `bb288b3`, `7fe388c`, `7006e97` no triggearon deploys.
+  Cuando se recupere: `git commit --allow-empty -m "ci: retrigger"
+  && git push` o "Run workflow" manual en la UI.
