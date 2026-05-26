@@ -1,10 +1,18 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, MessageCircle, Search } from 'lucide-react'
+import { AlertCircle, AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, MessageCircle, Search, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Money } from '@/components/admin-backoffice/shared/money'
+import { RegisterCollectionForm } from '@/components/admin-backoffice/cobranzas/register-collection-form'
 import type { IAdminLiquidationItem, IAdminLiquidationRunDetail } from '@/lib/types'
 
 const MONTHS_ES = [
@@ -177,7 +185,14 @@ export function CobranzaMesView({ run }: { run: IAdminLiquidationRunDetail }) {
           <p className="px-5 py-10 text-sm text-muted-foreground text-center">No hay unidades para este filtro.</p>
         ) : (
           <ul className="divide-y divide-border/40">
-            {filtered.map((row) => <RowItem key={row.item.id} row={row} />)}
+            {filtered.map((row) => (
+              <RowItem
+                key={row.item.id}
+                row={row}
+                cashAccounts={run.cashAccounts}
+                dueDates={run.dueDates}
+              />
+            ))}
           </ul>
         )}
       </section>
@@ -225,9 +240,18 @@ function BucketKpi({ bucket, count, label }: { bucket: Bucket; count: number; la
   )
 }
 
-function RowItem({ row }: { row: ItemRow }) {
+function RowItem({
+  row,
+  cashAccounts,
+  dueDates,
+}: {
+  row: ItemRow
+  cashAccounts: IAdminLiquidationRunDetail['cashAccounts']
+  dueDates: IAdminLiquidationRunDetail['dueDates']
+}) {
   const meta = BUCKET_META[row.bucket]
   const [open, setOpen] = useState(false)
+  const [collectOpen, setCollectOpen] = useState(false)
   const balance = row.item.balanceRemaining
 
   const reminderMessage = `Hola ${row.item.activeHolderName ?? 'vecino/a'}, te recuerdo que tenés un saldo pendiente de ${formatARS(balance)} en tu unidad ${row.item.unitCode}.`
@@ -257,6 +281,17 @@ function RowItem({ row }: { row: ItemRow }) {
         </div>
         <div className="flex items-center gap-2">
           {balance > 0 ? (
+            <button
+              type="button"
+              onClick={() => setCollectOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 text-xs font-medium transition-colors"
+              title="Registrar pago"
+            >
+              <Wallet className="w-3.5 h-3.5" />
+              Registrar pago
+            </button>
+          ) : null}
+          {balance > 0 ? (
             <a
               href={waHref}
               target="_blank"
@@ -273,6 +308,28 @@ function RowItem({ row }: { row: ItemRow }) {
           </Button>
         </div>
       </div>
+
+      <Dialog open={collectOpen} onOpenChange={setCollectOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Registrar cobranza</DialogTitle>
+            <DialogDescription>
+              Unidad {row.item.unitCode}
+              {row.item.activeHolderName ? ` · ${row.item.activeHolderName}` : ''}
+            </DialogDescription>
+          </DialogHeader>
+          <RegisterCollectionForm
+            itemId={row.item.id}
+            unitCode={row.item.unitCode}
+            holderName={row.item.activeHolderName}
+            subtotal={row.item.subtotal}
+            balanceRemaining={balance}
+            dueDates={dueDates}
+            cashAccounts={cashAccounts}
+            onDone={() => setCollectOpen(false)}
+          />
+        </DialogContent>
+      </Dialog>
       {open ? (
         <div className="mt-3 ml-2 pl-4 border-l-2 border-border/40 space-y-1 text-xs text-muted-foreground">
           <p>Ordinaria: <span className="tabular-nums text-foreground"><Money amount={row.item.ordinaryAmount} /></span></p>
