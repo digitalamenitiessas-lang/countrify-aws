@@ -548,7 +548,7 @@ export async function insertAIExtractionInPostgres(input: {
     await pgQuery(
       `
         insert into countrify.iadmin_ai_document_extractions (document_id, status, provider, suggested_fields, confidence, validated_by, validated_at)
-        values ($1, $2::iadmin_extraction_status, $3, $4::jsonb, $5, $6, now())
+        values ($1, $2::iadmin_ai_extraction_status, $3, $4::jsonb, $5, $6, now())
       `,
       [input.documentId, input.status, input.provider, JSON.stringify(input.suggestedFields), input.confidence, input.validatedBy],
     )
@@ -556,7 +556,7 @@ export async function insertAIExtractionInPostgres(input: {
     await pgQuery(
       `
         insert into countrify.iadmin_ai_document_extractions (document_id, status, provider, suggested_fields, confidence)
-        values ($1, $2::iadmin_extraction_status, $3, $4::jsonb, $5)
+        values ($1, $2::iadmin_ai_extraction_status, $3, $4::jsonb, $5)
       `,
       [input.documentId, input.status, input.provider, JSON.stringify(input.suggestedFields), input.confidence],
     )
@@ -623,7 +623,7 @@ export async function updateAIExtractionDecisionInPostgres(input: {
   await pgQuery(
     `
       update countrify.iadmin_ai_document_extractions
-      set status = $1::iadmin_extraction_status,
+      set status = $1::iadmin_ai_extraction_status,
           validated_by = $2,
           validated_at = now(),
           validation_notes = $3
@@ -2317,7 +2317,7 @@ export async function insertReminderInPostgres(input: {
         administration_id, managed_property_id, liquidation_item_id, reminder_kind,
         status, amount_due, due_label, due_date, message_body
       )
-      values ($1, $2, $3, $4::iadmin_reminder_kind, 'pending', $5, $6, $7::date, $8)
+      values ($1, $2, $3, $4, 'pending', $5, $6, $7::date, $8)
     `,
     [
       input.administrationId,
@@ -2350,14 +2350,14 @@ export async function setReminderStatusInPostgres(input: {
 }): Promise<void> {
   if (input.status === 'sent') {
     await pgQuery(
-      `update countrify.iadmin_reminders set status = 'sent'::iadmin_reminder_status, sent_at = now(), sent_by = $1 where id = $2`,
+      `update countrify.iadmin_reminders set status = 'sent', sent_at = now(), sent_by = $1 where id = $2`,
       [input.actorProfileId, input.reminderId],
     )
   } else {
     await pgQuery(
       `
         update countrify.iadmin_reminders
-        set status = 'dismissed'::iadmin_reminder_status,
+        set status = 'dismissed',
             dismissed_at = now(),
             dismissed_by = $1,
             notes = coalesce($2, notes)
@@ -2379,7 +2379,7 @@ export async function bulkUpdatePendingRemindersInPostgres(input: {
     const result = await pgQuery<{ id: string }>(
       `
         update countrify.iadmin_reminders
-        set status = 'sent'::iadmin_reminder_status, sent_at = now(), sent_by = $1
+        set status = 'sent', sent_at = now(), sent_by = $1
         where administration_id = $2
           and id = any($3::uuid[])
           and status = 'pending'
@@ -2392,7 +2392,7 @@ export async function bulkUpdatePendingRemindersInPostgres(input: {
   const result = await pgQuery<{ id: string }>(
     `
       update countrify.iadmin_reminders
-      set status = 'dismissed'::iadmin_reminder_status, dismissed_at = now(), dismissed_by = $1
+      set status = 'dismissed', dismissed_at = now(), dismissed_by = $1
       where administration_id = $2
         and id = any($3::uuid[])
         and status = 'pending'
@@ -2567,7 +2567,7 @@ export async function insertBankMovementInPostgres(input: {
         administration_id, managed_property_id, cash_account_id, movement_date,
         description, amount, external_ref, movement_kind, expense_id, created_by
       )
-      values ($1, $2, $3, $4::date, $5, $6, $7, $8::iadmin_bank_movement_kind, $9, $10)
+      values ($1, $2, $3, $4::date, $5, $6, $7, $8, $9, $10)
       returning id
     `,
     [
