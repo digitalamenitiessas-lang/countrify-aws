@@ -33,6 +33,12 @@ export function RegisterCollectionForm({
 }: Props) {
   const [pending, startTransition] = useTransition()
   const activeAccounts = cashAccounts.filter((a) => a.isActive)
+  const arsFormatter = new Intl.NumberFormat('es-AR', {
+    style: 'currency',
+    currency: 'ARS',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
   const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? '')
   const [amount, setAmount] = useState(balanceRemaining.toFixed(2))
   const [paidAt, setPaidAt] = useState(new Date().toISOString().slice(0, 10))
@@ -101,7 +107,7 @@ export function RegisterCollectionForm({
           >
             {activeAccounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name} · {a.currentBalance.toLocaleString('es-AR')}
+                {a.name} · saldo {arsFormatter.format(a.currentBalance)}
               </option>
             ))}
           </select>

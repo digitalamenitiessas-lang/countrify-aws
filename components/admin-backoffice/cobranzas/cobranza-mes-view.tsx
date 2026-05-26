@@ -310,7 +310,7 @@ function RowItem({
       </div>
 
       <Dialog open={collectOpen} onOpenChange={setCollectOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Registrar cobranza</DialogTitle>
             <DialogDescription>
