@@ -1630,13 +1630,18 @@ export function SuperAdminDashboard({ data }: { data: SuperAdminDashboardData })
                       onChange={(e) => updateBuildingName(e.target.value)}
                       required
                     />
-                    <Input
-                      placeholder="Unidades totales"
-                      inputMode="numeric"
-                      value={consorcioDraft.totalUnits}
-                      onChange={(e) => setConsorcioDraft({ ...consorcioDraft, totalUnits: e.target.value })}
-                      required
-                    />
+                    <div className="space-y-1">
+                      <Input
+                        placeholder="Capacidad estimada (informativa)"
+                        inputMode="numeric"
+                        value={consorcioDraft.totalUnits}
+                        onChange={(e) => setConsorcioDraft({ ...consorcioDraft, totalUnits: e.target.value })}
+                        required
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Solo es un dato informativo del country. Las unidades reales las carga el administrador desde IAdmin o importando un Excel.
+                      </p>
+                    </div>
                   </div>
 
                   <div className="glass-card rounded-2xl p-4 overflow-hidden relative">

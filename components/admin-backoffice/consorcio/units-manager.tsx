@@ -683,11 +683,19 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                                         if (!q) return true
                                         return p.fullName.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
                                       })
-                                      .map((p) => (
-                                        <option key={p.id} value={p.id}>
-                                          {p.fullName} · {p.email} · {p.activeMembershipsCount === 0 ? 'sin unidad' : `${p.activeMembershipsCount} unidad(es)`}
-                                        </option>
-                                      ))}
+                                      .map((p) => {
+                                        const origin = p.sameBuilding
+                                          ? 'este consorcio'
+                                          : p.currentBuildingName
+                                            ? `viene de ${p.currentBuildingName}`
+                                            : 'sin consorcio asignado'
+                                        const usage = p.activeMembershipsCount === 0 ? 'sin unidad' : `${p.activeMembershipsCount} unidad(es)`
+                                        return (
+                                          <option key={p.id} value={p.id}>
+                                            {p.fullName} · {p.email} · {origin} · {usage}
+                                          </option>
+                                        )
+                                      })}
                                   </select>
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">

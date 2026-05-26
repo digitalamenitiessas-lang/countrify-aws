@@ -846,6 +846,8 @@ export type IAdminLinkableProfile = {
   role: 'vecino' | 'propietario'
   phone: string | null
   activeMembershipsCount: number
+  sameBuilding: boolean
+  currentBuildingName: string | null
 }
 
 export type IAdminCashAccountKind = 'bank' | 'cash' | 'reserve' | 'other'

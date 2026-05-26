@@ -28,6 +28,7 @@ import {
   insertOwnerHolderInPostgres,
   insertUnitFromCrudInPostgres,
   insertUnitHolderFromCrudInPostgres,
+  setProfileBuildingInPostgres,
   updateManagedPropertyInPostgres,
   updatePropertyLegalInfoInPostgres,
   updateUnitInPostgres,
@@ -517,11 +518,12 @@ export async function linkExistingProfileToUnit(input: z.input<typeof linkExisti
 
   const target = await findProfileById(parsed.profileId)
   if (!target) throw new Error('Vecino no encontrado')
-  if (target.buildingId !== scope.buildingId) {
-    throw new Error('El vecino no pertenece a este consorcio')
-  }
   if (target.role !== 'vecino' && target.role !== 'propietario') {
     throw new Error('Solo se pueden vincular vecinos o propietarios')
+  }
+  const buildingMoved = target.buildingId !== scope.buildingId
+  if (buildingMoved) {
+    await setProfileBuildingInPostgres(parsed.profileId, scope.buildingId)
   }
 
   if (parsed.relationshipType === 'vecino_principal') {
@@ -570,6 +572,8 @@ export async function linkExistingProfileToUnit(input: z.input<typeof linkExisti
       unit_code: scope.unitCode,
       profile_id: parsed.profileId,
       relationship_type: parsed.relationshipType,
+      building_moved: buildingMoved,
+      previous_building_id: target.buildingId,
     },
   })
 

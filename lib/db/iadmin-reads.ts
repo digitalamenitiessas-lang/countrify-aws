@@ -1389,6 +1389,8 @@ export type LinkableProfileRow = {
   role: 'vecino' | 'propietario'
   phone: string | null
   active_memberships_count: number
+  same_building: boolean
+  current_building_name: string | null
 }
 
 export async function listLinkableProfilesByBuildingFromPostgres(
@@ -1402,17 +1404,23 @@ export async function listLinkableProfilesByBuildingFromPostgres(
         p.full_name,
         p.role::text as role,
         p.phone,
-        coalesce(m.active_count, 0)::int as active_memberships_count
+        coalesce(m.active_count, 0)::int as active_memberships_count,
+        (p.building_id = $1) as same_building,
+        b.name as current_building_name
       from countrify.profiles p
+      left join countrify.buildings b on b.id = p.building_id
       left join (
         select profile_id, count(*)::int as active_count
         from countrify.unit_profile_memberships
         where building_id = $1 and active = true
         group by profile_id
       ) m on m.profile_id = p.id
-      where p.building_id = $1
-        and p.role in ('vecino', 'propietario')
-      order by coalesce(m.active_count, 0) asc, p.full_name asc
+      where p.role in ('vecino', 'propietario')
+      order by
+        (p.building_id = $1) desc,
+        (p.building_id is null) desc,
+        coalesce(m.active_count, 0) asc,
+        p.full_name asc
     `,
     [buildingId],
   )

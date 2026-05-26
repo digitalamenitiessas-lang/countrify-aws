@@ -1875,6 +1875,8 @@ export async function getIAdminLinkableProfiles(buildingId: string): Promise<IAd
     role: r.role,
     phone: r.phone,
     activeMembershipsCount: r.active_memberships_count,
+    sameBuilding: r.same_building,
+    currentBuildingName: r.current_building_name,
   }))
 }
 

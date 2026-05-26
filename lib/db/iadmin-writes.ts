@@ -1221,6 +1221,13 @@ export async function listExpensesForDuplicateCheckFromPostgres(input: {
   return result.rows
 }
 
+export async function setProfileBuildingInPostgres(profileId: string, buildingId: string): Promise<void> {
+  await pgQuery(
+    `update countrify.profiles set building_id = $1 where id = $2`,
+    [buildingId, profileId],
+  )
+}
+
 export async function listProfileNamesByIdsFromPostgres(profileIds: string[]): Promise<
   Map<string, string>
 > {
