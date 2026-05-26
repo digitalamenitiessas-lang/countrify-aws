@@ -90,12 +90,16 @@ abrir este doc da el estado de cada item.
 
 ## Sprint 2 — Features gaps
 
-- [x] **Cobranzas MVP** ✅ (commit `0361dc0`, 2026-05-25)
+- [x] **Cobranzas MVP** ✅ (commits `0361dc0` + `8350e3f`, 2026-05-25/26)
   - Vista scoped por edificio (`/iadmin/cobranzas?propertyId=…`)
   - KPIs cobrado/pendiente + buckets pagó-tiempo/tarde/parcial/sin pagar
   - Listado filtrable, drawer de detalle por unidad, recordatorio WhatsApp.
-  - Pendiente: vista cross-cartera (placeholder), drawer de registrar
-    cobro en la página (el form existe, falta engancharlo acá).
+  - Botón "Registrar pago" en cada unidad con saldo > 0 abre Dialog con
+    `RegisterCollectionForm` enganchado. Loop completo cerrado.
+  - Pendiente: vista cross-cartera (hoy es placeholder).
+  - **Smoke test pendiente**: necesita seed de datos demo
+    (`scripts/seed-cobranzas-demo.js`) — RDS no es accesible desde local
+    sin VPN/bastion, así que matías lo corre desde su máquina.
 - [ ] PDF de liquidación / recibo verificado E2E
 - [ ] Reportes / morosos / export CSV en cobranzas
 - [ ] Conciliación bancaria CSV import
