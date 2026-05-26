@@ -890,6 +890,7 @@ export function MonthlyPlanilla({
         <MesaPreviousRecap
           previousMonth={grid.months[grid.months.length - 2]}
           previousState={previousState}
+          propertyId={grid.propertyId}
         />
       ) : null}
 
