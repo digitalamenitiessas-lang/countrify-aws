@@ -176,7 +176,7 @@ export async function listAnnouncementRecipientsFromPostgres(input: {
         left join countrify.unit_profile_memberships m
           on m.profile_id = p.id and m.building_id = $1 and m.active = true
        where (p.building_id = $1 or m.building_id = $1)
-         and p.role in ('vecino', 'propietario')
+         and p.role = 'vecino'
          and p.email is not null
     `,
     [input.buildingId],

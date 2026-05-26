@@ -2,6 +2,7 @@ export type EmailTemplateKey =
   | 'welcome'
   | 'password_reset'
   | 'security_alert'
+  | 'announcement'
 
 export interface EmailRecipient {
   email: string

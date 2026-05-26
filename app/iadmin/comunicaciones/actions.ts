@@ -13,6 +13,7 @@ import {
   updateAnnouncementInPostgres,
 } from '@/lib/db/announcements'
 import { pgQuery } from '@/lib/db/postgres'
+import { notifyAnnouncementPublished } from '@/lib/email/notifications/announcements'
 
 const draftSchema = z.object({
   administrationId: z.string().uuid(),
@@ -173,6 +174,11 @@ export async function publishAnnouncement(input: z.input<typeof publishSchema>) 
     action: 'announcement.published',
     metadata: { building_id: parsed.buildingId, title: parsed.title, pinned: parsed.pinned ?? false },
   })
+
+  // Mail a vecinos opt-in fire-and-forget. Si SES esta en sandbox solo van
+  // a llegar a destinatarios verificados; el resto queda como warn en logs
+  // y no bloquea el publish.
+  void notifyAnnouncementPublished(id)
 
   revalidatePath('/iadmin/comunicaciones')
   revalidatePath('/usuario')
