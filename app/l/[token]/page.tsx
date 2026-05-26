@@ -1,5 +1,5 @@
 import { notFound } from 'next/navigation'
-import { Building2, CalendarClock, CheckCircle2, Mail, Phone, Wallet } from 'lucide-react'
+import { Building2, CalendarClock, CheckCircle2, Download, Mail, Phone, Wallet } from 'lucide-react'
 import { getPublicLiquidationByToken } from '@/lib/iadmin/public-liquidation'
 import type { Metadata } from 'next'
 
@@ -56,6 +56,15 @@ export default async function VecinoLiquidacionPage({ params }: { params: Promis
                 {view.holderName ? <span className="text-slate-500"> · {view.holderName}</span> : null}
               </div>
             </div>
+          </div>
+          <div className="mt-3 flex justify-end">
+            <a
+              href={`/l/${token}/pdf`}
+              className="inline-flex items-center gap-1.5 rounded-md bg-slate-900 text-white px-3 py-1.5 text-xs font-medium hover:bg-slate-700"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Descargar PDF
+            </a>
           </div>
         </header>
 
