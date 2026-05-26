@@ -4,7 +4,7 @@ Tracking de los gaps para salir a producción. Espejo del doc de Citify
 pero con el estado real de Countrify. Si la sesión se interrumpe,
 abrir este doc da el estado de cada item.
 
-Última actualización: 2026-05-26
+Última actualización: 2026-05-26 (tarde)
 
 ---
 
@@ -97,10 +97,13 @@ abrir este doc da el estado de cada item.
   - Botón "Registrar pago" en cada unidad con saldo > 0 abre Dialog con
     `RegisterCollectionForm` enganchado. Loop completo cerrado.
   - Pendiente: vista cross-cartera (hoy es placeholder).
-  - **Smoke test pendiente**: necesita seed de datos demo
-    (`scripts/seed-cobranzas-demo.js`) — RDS no es accesible desde local
-    sin VPN/bastion, así que matías lo corre desde su máquina.
-- [ ] PDF de liquidación / recibo verificado E2E
+  - **Smoke test pendiente**: usar Country Los Naranjos (ver "Estrategia
+    de validación" abajo). El run actual está en `calculated`, hay que
+    emitirlo desde la UI.
+- [ ] **PDF de liquidación / recibo verificado E2E** — código portado
+      (commits anteriores: `app/print/liquidaciones/[id]/page.tsx` 366
+      líneas, `app/l/[token]/page.tsx` 232 líneas, ambos idénticos a
+      Citify). Falta solo smoke test E2E con data real.
 - [ ] Reportes / morosos / export CSV en cobranzas
 - [ ] Conciliación bancaria CSV import
 - [ ] Restaurar / asignar `iadmin_unit_holders` desde UI
@@ -119,7 +122,33 @@ abrir este doc da el estado de cada item.
 - [ ] **Seed de datos demo de cobranzas**: Country Demo tiene
       managed_property + unidades pero 0 liquidaciones. Para testear
       la UI con datos reales hay que cargar gastos + emitir un run, o
-      seedear con SQL.
+      seedear con SQL (`scripts/seed-cobranzas-demo.js`).
+
+## Estrategia de validación E2E
+
+**Edificios disponibles en prod** (query del 2026-05-26 sobre
+`countrify.iadmin_managed_properties`):
+
+| Edificio | propertyId | Estado | Uso recomendado |
+|---|---|---|---|
+| Country Los Naranjos | `54cd08f9-32ef-4f40-bc99-77c6bb57d275` | 3 unidades, 2 gastos, 1 run **calculated** (Mayo 2026), 0 pagos | **Validación real**: emitir el run y usar este edificio para validar cobranzas / reminders / PDF en vivo |
+| Country Demo | `4dd0c8ea-e246-4a1c-8625-77f8a64b4702` | Vacío de actividad | Sandbox para demos / seed script |
+| Country Praderas | `66105181-fcaf-4ae5-9a10-351df52fd60f` | Vacío | Disponible |
+
+**Checklist de validación de lo shippeado hoy** (usando Los Naranjos):
+
+1. Login admin de Los Naranjos → `/iadmin/liquidaciones?propertyId=54cd08f9-…`
+   → botón "Emitir" (pide 2 due_dates) → run pasa de `calculated` a `issued`.
+2. `/iadmin/cobranzas?propertyId=54cd08f9-…` → ver KPIs + 3 unidades
+   unpaid + botón "Registrar pago" → cargar pago de prueba en una.
+3. Verlo después en bucket "Pago parcial" (loop cerrado).
+4. `aws lambda invoke --function-name countrify-cron-generate-reminders` →
+   debería crear 3-6 reminders en lugar de 0/0/0.
+5. `/iadmin/recordatorios?propertyId=54cd08f9-…` → bandeja con avisos.
+6. `/print/liquidaciones/<run-id>` → vista imprimible del consorcio
+   completo. Cmd/Ctrl+P → "Guardar como PDF".
+7. Generar share token de una unidad → abrir `/l/<token>` → recibo
+   público del vecino.
 
 ## Roadmap v1.5+
 
@@ -138,7 +167,9 @@ abrir este doc da el estado de cada item.
 
 **Sprint 1**: 2/9 completos (CI/CD + Reminders cron).
 
-**Sprint 2**: 1/5 completos (cobranzas MVP).
+**Sprint 2**: 1/5 completos (cobranzas MVP). PDF/recibo público ya
+están portados, solo falta validación E2E pendiente del paso "Emitir"
+en Los Naranjos.
 
 ## Incidentes activos
 
