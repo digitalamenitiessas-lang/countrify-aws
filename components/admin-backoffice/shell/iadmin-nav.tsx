@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
-import { Banknote, Bell, BellRing, Building2, Receipt, ScrollText, Wallet } from 'lucide-react'
+import { Banknote, Bell, BellRing, Building2, Megaphone, Receipt, ScrollText, Wallet } from 'lucide-react'
 import type { IAdminCapability } from '@/lib/types'
 
 const NAV_ITEMS: ReadonlyArray<{
@@ -18,6 +18,7 @@ const NAV_ITEMS: ReadonlyArray<{
   { href: '/iadmin/liquidaciones', label: 'Liquidaciones', icon: ScrollText, need: 'liquidations.view', matchPrefix: '/iadmin/liquidaciones' },
   { href: '/iadmin/cobranzas', label: 'Cobranzas', icon: Wallet, need: 'collections.view', matchPrefix: '/iadmin/cobranzas', acceptsPropertyScope: true },
   { href: '/iadmin/recordatorios', label: 'Recordatorios', icon: BellRing, need: 'reminders.generate', matchPrefix: '/iadmin/recordatorios', acceptsPropertyScope: true },
+  { href: '/iadmin/comunicaciones', label: 'Comunicados', icon: Megaphone, need: 'communications.send', matchPrefix: '/iadmin/comunicaciones' },
 ]
 
 const CONSORCIO_PATH_RE = /^\/iadmin\/consorcios\/([0-9a-f-]{36})(?:\/|$)/i
