@@ -21,9 +21,11 @@ import {
   Tag,
   Ticket,
   Info,
+  Megaphone,
   Users,
   X,
 } from 'lucide-react'
+import { NeighborAnnouncementsPanel } from '@/components/announcements/neighbor-announcements-panel'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -526,9 +528,9 @@ function FullPromotionsView({ promotions, savedCoupons, usedCoupons, onSaveToggl
 
 // ─── MAIN DASHBOARD ───────────────────────────────────────────────────────────
 
-type MainView = 'home' | 'all-promos' | 'building-promos' | 'marketplace' | 'my-coupons' | 'stores' | 'household'
+type MainView = 'home' | 'all-promos' | 'building-promos' | 'marketplace' | 'my-coupons' | 'stores' | 'household' | 'announcements'
 
-const MAIN_VIEW_OPTIONS: MainView[] = ['home', 'all-promos', 'building-promos', 'marketplace', 'my-coupons', 'stores', 'household']
+const MAIN_VIEW_OPTIONS: MainView[] = ['home', 'all-promos', 'building-promos', 'marketplace', 'my-coupons', 'stores', 'household', 'announcements']
 const NEIGHBOR_TOUR_STORAGE_KEY = 'countrify-neighbor-tour-v1'
 
 const NEIGHBOR_TOUR_STEPS_DESKTOP: Array<{
@@ -1055,6 +1057,7 @@ export function ConsumerDashboard({ initialData, profileId, profileName, avatarT
   ] as const
 
   const desktopExtraNav = [
+    { key: 'announcements', label: 'Comunicados', icon: Megaphone },
     { key: 'household', label: 'Unidad', icon: Users },
   ] as const
 
@@ -1310,6 +1313,14 @@ export function ConsumerDashboard({ initialData, profileId, profileName, avatarT
               </div>
             )}
           </div>
+        )}
+
+        {mainView === 'announcements' && (
+          <NeighborAnnouncementsPanel
+            announcements={initialData.announcements}
+            onBack={() => setMainView('home')}
+            focusedId={searchParams.get('id')}
+          />
         )}
 
         {mainView === 'household' && (

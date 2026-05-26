@@ -1193,6 +1193,8 @@ export async function getConsumerDashboardData(profileId: string): Promise<Consu
       complaintMentionableUsers: [],
       complaintCases: [],
       complaintCaseDetails: [],
+      announcements: [],
+      unreadAnnouncementsCount: 0,
     }
   }
 
@@ -1212,6 +1214,7 @@ export async function getConsumerDashboardData(profileId: string): Promise<Consu
     mentionablesRows,
     businessesRows,
     buildingInfoRows,
+    announcementsRows,
   ] = await Promise.all([
     buildingId ? getBuildingFullByIdFromPostgres(buildingId) : Promise.resolve(null),
     getPublicPromotionsFromPostgres(500),
@@ -1229,6 +1232,12 @@ export async function getConsumerDashboardData(profileId: string): Promise<Consu
           buildingId,
           visibleTo: ['residentes', 'vecinos'],
         })
+      : Promise.resolve([]),
+    buildingId
+      ? (async () => {
+          const { listAnnouncementsForRecipientFromPostgres } = await import('@/lib/db/announcements')
+          return listAnnouncementsForRecipientFromPostgres({ profileId, buildingId })
+        })()
       : Promise.resolve([]),
   ])
 
@@ -1299,6 +1308,19 @@ export async function getConsumerDashboardData(profileId: string): Promise<Consu
     complaintMentionableUsers: mentionableUsers,
     complaintCases,
     complaintCaseDetails,
+    announcements: announcementsRows.map((row) => ({
+      id: row.id,
+      buildingId: row.building_id,
+      buildingName: row.building_name,
+      authorName: row.author_name,
+      title: row.title,
+      body: row.body,
+      pinned: row.pinned,
+      expiresAt: row.expires_at,
+      publishedAt: row.published_at,
+      isRead: row.is_read,
+    })),
+    unreadAnnouncementsCount: announcementsRows.filter((row) => !row.is_read).length,
   }
 }
 

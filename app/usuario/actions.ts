@@ -11,6 +11,7 @@ import {
   findUnitProfileMembershipFromPostgres,
   upsertUnitProfileMembershipInPostgres,
 } from '@/lib/db/iadmin-writes'
+import { markAnnouncementReadInPostgres } from '@/lib/db/announcements'
 
 function avatarFromName(fullName: string) {
   return (
@@ -99,4 +100,20 @@ export async function createHouseholdNeighbor(input: z.input<typeof householdNei
 
   revalidatePath('/usuario')
   return { profileId }
+}
+
+const markReadSchema = z.object({
+  announcementId: z.string().uuid(),
+})
+
+export async function markAnnouncementReadAction(
+  input: z.input<typeof markReadSchema>,
+): Promise<{ ok: true }> {
+  const parsed = markReadSchema.parse(input)
+  const { profile } = await requireProfile(['vecino', 'super_admin'])
+  await markAnnouncementReadInPostgres({
+    announcementId: parsed.announcementId,
+    profileId: profile.id,
+  })
+  return { ok: true }
 }

@@ -493,6 +493,19 @@ export interface InitialOccupancyImportConfirmResult {
   errors: string[]
 }
 
+export interface NeighborAnnouncement {
+  id: string
+  buildingId: string
+  buildingName: string | null
+  authorName: string | null
+  title: string
+  body: string
+  pinned: boolean
+  expiresAt: string | null
+  publishedAt: string
+  isRead: boolean
+}
+
 export interface ConsumerDashboardData {
   building: Building | null
   businesses: Business[]
@@ -507,6 +520,8 @@ export interface ConsumerDashboardData {
   complaintMentionableUsers: ComplaintCaseMentionableUser[]
   complaintCases: ComplaintCaseListItem[]
   complaintCaseDetails: ComplaintCaseDetailNeighborView[]
+  announcements: NeighborAnnouncement[]
+  unreadAnnouncementsCount: number
 }
 
 export interface OwnerUnitSummary {
