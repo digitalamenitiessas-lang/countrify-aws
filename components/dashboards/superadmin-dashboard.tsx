@@ -50,9 +50,9 @@ import type {
 type TabType = 'overview' | 'buildings' | 'users' | 'businesses' | 'promotions'
 
 const PROPERTY_KIND_OPTIONS: Array<{ value: IAdminPropertyKind; label: string }> = [
+  { value: 'barrio_privado', label: 'Country / Barrio privado' },
   { value: 'consorcio', label: 'Consorcio' },
-  { value: 'barrio_privado', label: 'Barrio privado' },
-  { value: 'country', label: 'Country' },
+  { value: 'edificio', label: 'Edificio' },
   { value: 'mixto', label: 'Mixto' },
 ]
 
