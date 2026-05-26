@@ -79,8 +79,13 @@ abrir este doc da el estado de cada item.
       `cron(0 12 * * ? *)` = 09:00 ARG.
     - Probada manualmente con `aws lambda invoke`: wiring OK, conecta
       y envía bearer correcto.
-  - **Pendiente smoke test del endpoint** post-deploy del commit
-    `7fe388c` (bloqueado por outage de GitHub Actions del 2026-05-26).
+  - **Smoke test end-to-end OK** ✅ (2026-05-26): Lambda invocada
+    manualmente → endpoint respondió `{ok:true, administrations:2,
+    totalCreated:0, totalSkipped:0, errors:0}`. Cero creados porque
+    no hay liquidaciones emitidas con saldo pendiente todavía.
+  - Deploy del commit `7fe388c` fue manual via docker build/push +
+    `update-service --force-new-deployment` porque GitHub Actions
+    estaba en major outage el 2026-05-26.
 - [ ] Mobile responsive en `/iadmin/*` (built para desktop)
 
 ## Sprint 2 — Features gaps
@@ -134,6 +139,7 @@ abrir este doc da el estado de cada item.
 ## Incidentes activos
 
 - **2026-05-26**: GitHub Actions major outage (githubstatus.com).
-  Commits `bb288b3`, `7fe388c`, `7006e97` no triggearon deploys.
-  Cuando se recupere: `git commit --allow-empty -m "ci: retrigger"
-  && git push` o "Run workflow" manual en la UI.
+  Deploy del commit `7fe388c` se hizo manual via docker push +
+  `update-service --force-new-deployment` para no quedar bloqueados.
+  El próximo commit cuando se recupere Actions debería deploy
+  automáticamente (no se requiere acción de re-trigger).
