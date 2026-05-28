@@ -6,14 +6,12 @@ import { useMemo } from 'react'
 import {
   Banknote,
   BarChart3,
-  BellRing,
   Building2,
   FileSpreadsheet,
   Home,
   Megaphone,
   Receipt,
   Scale,
-  ScrollText,
   Table,
   Wallet,
 } from 'lucide-react'
@@ -36,13 +34,13 @@ type Props = {
   cookiePropertyId: string | null
 }
 
+// Nav global simplificado: solo lo cross-cartera. Liquidaciones y Recordatorios
+// viven dentro de Mesa del mes de cada country (sus URLs siguen vivas por compat).
 const GLOBAL_ITEMS: ReadonlyArray<NavItem> = [
   { href: '/iadmin', label: 'Inicio', icon: Home, need: 'portfolio.view', exact: true },
   { href: '/iadmin/gastos', label: 'Gastos', icon: Receipt, need: 'expenses.view', matchPrefix: '/iadmin/gastos' },
-  { href: '/iadmin/liquidaciones', label: 'Liquidaciones', icon: ScrollText, need: 'liquidations.view', matchPrefix: '/iadmin/liquidaciones' },
   { href: '/iadmin/cobranzas', label: 'Cobranzas', icon: Wallet, need: 'collections.view', matchPrefix: '/iadmin/cobranzas' },
   { href: '/iadmin/comunicaciones', label: 'Comunicados', icon: Megaphone, need: 'communications.send', matchPrefix: '/iadmin/comunicaciones' },
-  { href: '/iadmin/recordatorios', label: 'Recordatorios', icon: BellRing, need: 'reminders.generate', matchPrefix: '/iadmin/recordatorios' },
 ]
 
 type ConsorcioItem = {

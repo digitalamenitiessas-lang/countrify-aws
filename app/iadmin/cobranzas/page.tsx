@@ -1,3 +1,5 @@
+import Link from 'next/link'
+import { ArrowRight, Building2 } from 'lucide-react'
 import { CobranzaMesView } from '@/components/admin-backoffice/cobranzas/cobranza-mes-view'
 import { PropertyFilterBanner } from '@/components/admin-backoffice/shell/property-filter-banner'
 import { requireIAdmin } from '@/lib/auth'
@@ -10,10 +12,11 @@ export default async function CobranzasPage() {
 
   const administrationId = context.primary?.administration.id
   const portfolio = administrationId ? await getIAdminPortfolio(administrationId) : null
-  const allowedIds = (portfolio?.properties ?? []).map((p) => p.id)
+  const properties = portfolio?.properties ?? []
+  const allowedIds = properties.map((p) => p.id)
   const currentPropertyId = await getCurrentPropertyId(allowedIds)
   const scopedProperty = currentPropertyId
-    ? portfolio?.properties.find((p) => p.id === currentPropertyId) ?? null
+    ? properties.find((p) => p.id === currentPropertyId) ?? null
     : null
 
   let runDetail: Awaited<ReturnType<typeof getIAdminLiquidationRunDetail>> = null
@@ -31,34 +34,72 @@ export default async function CobranzasPage() {
     }
   }
 
+  // Sin country activo y varios para elegir → lista de cards para pick uno.
+  if (!scopedProperty) {
+    return (
+      <div className="space-y-4">
+        <header className="glass-card rounded-2xl p-6">
+          <p className="text-xs uppercase tracking-wider text-primary font-medium">Cobranzas</p>
+          <h1 className="font-serif text-2xl font-bold text-foreground mt-1">Control de pagos</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Elegí un country (abajo o con el selector del header) para ver y registrar pagos de sus unidades.
+          </p>
+        </header>
+
+        {properties.length === 0 ? (
+          <div className="glass-card rounded-2xl p-10 text-center text-sm text-muted-foreground">
+            Todavía no tenés countries cargados.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {properties.map((p) => (
+              <Link
+                key={p.id}
+                href={`/iadmin/consorcios/${p.id}`}
+                className="glass-card rounded-2xl p-5 hover:ring-2 hover:ring-primary/30 transition-all group"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+                      <Building2 className="w-4 h-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-medium text-foreground truncate group-hover:text-primary">
+                        {p.displayName ?? p.buildingName}
+                      </div>
+                      <div className="text-xs text-muted-foreground truncate">
+                        {p.totalUnits} unidades
+                      </div>
+                    </div>
+                  </div>
+                  <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                </div>
+              </Link>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-4">
       <header className="glass-card rounded-2xl p-6">
         <p className="text-xs uppercase tracking-wider text-primary font-medium">Cobranzas</p>
         <h1 className="font-serif text-2xl font-bold text-foreground mt-1">
-          {scopedProperty ? `Cobranzas · ${scopedProperty.displayName ?? scopedProperty.buildingName}` : 'Cobranzas y deuda'}
+          Cobranzas · {scopedProperty.displayName ?? scopedProperty.buildingName}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          {scopedProperty
-            ? 'Estado de cobranza del último mes emitido. Quién pagó, quién pagó tarde, quién está en deuda.'
-            : 'Conciliacion de pagos contra liquidaciones emitidas.'}
+          Estado de cobranza del último mes emitido. Quién pagó, quién pagó tarde, quién está en deuda.
         </p>
       </header>
-      {scopedProperty ? (
-        <PropertyFilterBanner propertyName={scopedProperty.displayName ?? scopedProperty.buildingName} />
-      ) : null}
+      <PropertyFilterBanner propertyName={scopedProperty.displayName ?? scopedProperty.buildingName} />
 
-      {scopedProperty ? (
-        runDetail ? (
-          <CobranzaMesView run={runDetail} />
-        ) : (
-          <div className="glass-card rounded-2xl p-8 text-sm text-muted-foreground text-center">
-            Este edificio todavía no tiene una liquidación emitida. Andá a Resumen → "Liquidar y enviar" para emitir la del mes.
-          </div>
-        )
+      {runDetail ? (
+        <CobranzaMesView run={runDetail} />
       ) : (
-        <div className="glass-card rounded-2xl p-8 text-sm text-muted-foreground">
-          Vista cross-cartera de cobranzas en desarrollo. Por ahora, entrá a un edificio para ver su estado de cobranza del mes.
+        <div className="glass-card rounded-2xl p-8 text-sm text-muted-foreground text-center">
+          Este country todavía no tiene una liquidación emitida. Andá a la Mesa del mes → "Liquidar y enviar" para emitir la del mes.
         </div>
       )}
     </div>
