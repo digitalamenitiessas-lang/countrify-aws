@@ -4638,12 +4638,24 @@ begin
   into v_managed_property_id
   from inserted_property;
 
+  -- Promoción inteligente: el nuevo assignment queda primary salvo que el admin
+  -- ya tenga una asignación a un building CON contenido (managed_property). Así
+  -- un grant/assignment huérfano (building vacío) no roba el primary y deja al
+  -- admin viendo un edificio vacío por default.
   select exists(
     select 1
-    from countrify.building_admin_assignments
-    where profile_id = admin_profile_id
+    from countrify.building_admin_assignments a
+    join countrify.iadmin_managed_properties mp on mp.building_id = a.building_id
+    where a.profile_id = admin_profile_id
   )
   into v_has_assignments;
+
+  if not v_has_assignments then
+    update countrify.building_admin_assignments
+       set is_primary = false
+     where profile_id = admin_profile_id
+       and is_primary = true;
+  end if;
 
   insert into countrify.building_admin_assignments (
     profile_id,
@@ -4664,10 +4676,18 @@ begin
 
   select exists(
     select 1
-    from countrify.iadmin_role_grants
-    where profile_id = admin_profile_id
+    from countrify.iadmin_role_grants g
+    join countrify.iadmin_managed_properties mp on mp.administration_id = g.administration_id
+    where g.profile_id = admin_profile_id
   )
   into v_has_grants;
+
+  if not v_has_grants then
+    update countrify.iadmin_role_grants
+       set is_primary = false
+     where profile_id = admin_profile_id
+       and is_primary = true;
+  end if;
 
   insert into countrify.iadmin_role_grants (
     administration_id,
