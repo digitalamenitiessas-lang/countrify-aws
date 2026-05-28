@@ -1,7 +1,8 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { ChevronDown, ChevronRight, Pencil, UserPlus, UserX } from 'lucide-react'
+import Link from 'next/link'
+import { ChevronDown, ChevronRight, FileSpreadsheet, Pencil, Sparkles, UploadCloud, UserPlus, UserX } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -370,9 +371,49 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
           ) : null}
         </div>
         {canManageUnits && !creating ? (
-          <Button size="sm" onClick={() => setCreating(true)}>Nueva unidad</Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link
+              href={`/iadmin/consorcios/${propertyId}/importar`}
+              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
+              title="Subir Excel/CSV con todas las unidades de una vez"
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              Importar Excel
+            </Link>
+            <Button size="sm" onClick={() => setCreating(true)}>Nueva unidad</Button>
+          </div>
         ) : null}
       </div>
+
+      {/* Promo de import masivo cuando la lista está vacía */}
+      {canManageUnits && !creating && units.length === 0 ? (
+        <div className="glass-card rounded-2xl border-dashed border-2 border-primary/30 p-6 text-center space-y-3">
+          <div className="mx-auto w-12 h-12 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+            <UploadCloud className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="font-serif text-lg font-semibold text-foreground">
+              ¿Ya tenés tu cartera en Excel?
+            </h3>
+            <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+              Subí tu planilla y la IA mapea automáticamente las columnas a unidades y titulares.
+              Sin retipear nada — después solo revisás y completás lo que falte.
+            </p>
+          </div>
+          <div className="flex items-center justify-center gap-2 flex-wrap pt-1">
+            <Link
+              href={`/iadmin/consorcios/${propertyId}/importar`}
+              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Importar desde Excel
+            </Link>
+            <Button size="sm" variant="ghost" onClick={() => setCreating(true)}>
+              o crear una unidad manualmente
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {creating ? (
         <form onSubmit={submitNewUnit} className="glass-card rounded-2xl p-5 space-y-4">

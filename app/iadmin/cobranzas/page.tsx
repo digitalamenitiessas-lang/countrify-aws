@@ -1,21 +1,19 @@
-import { ScopedToBuildingBanner } from '@/components/admin-backoffice/shell/scoped-to-building-banner'
 import { CobranzaMesView } from '@/components/admin-backoffice/cobranzas/cobranza-mes-view'
+import { PropertyFilterBanner } from '@/components/admin-backoffice/shell/property-filter-banner'
 import { requireIAdmin } from '@/lib/auth'
 import { getIAdminLiquidationRunDetail, getIAdminPortfolio } from '@/lib/data'
+import { getCurrentPropertyId } from '@/lib/iadmin/current-property'
 import { pgQuery } from '@/lib/db/postgres'
 
-export default async function CobranzasPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ propertyId?: string }>
-}) {
+export default async function CobranzasPage() {
   const { context } = await requireIAdmin({ capability: 'collections.view' })
 
-  const { propertyId } = await searchParams
   const administrationId = context.primary?.administration.id
   const portfolio = administrationId ? await getIAdminPortfolio(administrationId) : null
-  const scopedProperty = propertyId
-    ? portfolio?.properties.find((p) => p.id === propertyId) ?? null
+  const allowedIds = (portfolio?.properties ?? []).map((p) => p.id)
+  const currentPropertyId = await getCurrentPropertyId(allowedIds)
+  const scopedProperty = currentPropertyId
+    ? portfolio?.properties.find((p) => p.id === currentPropertyId) ?? null
     : null
 
   let runDetail: Awaited<ReturnType<typeof getIAdminLiquidationRunDetail>> = null
@@ -47,10 +45,7 @@ export default async function CobranzasPage({
         </p>
       </header>
       {scopedProperty ? (
-        <ScopedToBuildingBanner
-          propertyName={scopedProperty.displayName ?? scopedProperty.buildingName}
-          basePath="/iadmin/cobranzas"
-        />
+        <PropertyFilterBanner propertyName={scopedProperty.displayName ?? scopedProperty.buildingName} />
       ) : null}
 
       {scopedProperty ? (

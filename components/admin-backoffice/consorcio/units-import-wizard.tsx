@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useTransition } from 'react'
 import * as XLSX from 'xlsx'
-import { ArrowRight, CheckCircle2, FileSpreadsheet, Loader2, Sparkles, UploadCloud, X } from 'lucide-react'
+import { ArrowRight, CheckCircle2, Download, FileSpreadsheet, Loader2, Sparkles, UploadCloud, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
@@ -55,6 +55,44 @@ export function UnitsImportWizard({ administrationId, propertyId, propertyName }
     setMapping({})
     setResult(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  /**
+   * Genera un Excel de plantilla con los headers esperados y 2 filas de ejemplo.
+   * Útil para users que parten de cero y no saben qué columnas poner.
+   */
+  function downloadTemplate() {
+    const templateRows = [
+      {
+        'Unidad': '1A',
+        'Tipo': 'departamento',
+        'Piso': '1',
+        'Superficie (m²)': 65,
+        'Alícuota (%)': 4.5,
+        'Titular': 'Juan Pérez',
+        'Tipo titular': 'propietario',
+        'CUIT/DNI': '20-12345678-9',
+        'Email': 'juan@ejemplo.com',
+        'Teléfono': '+54 9 11 1234-5678',
+      },
+      {
+        'Unidad': 'PB-B',
+        'Tipo': 'local',
+        'Piso': 'PB',
+        'Superficie (m²)': 40,
+        'Alícuota (%)': 3.2,
+        'Titular': 'Comercio SA',
+        'Tipo titular': 'inquilino',
+        'CUIT/DNI': '30-12345678-9',
+        'Email': '',
+        'Teléfono': '',
+      },
+    ]
+    const ws = XLSX.utils.json_to_sheet(templateRows)
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Unidades')
+    const safeName = propertyName.replace(/[^a-z0-9-_]+/gi, '_').slice(0, 40) || 'consorcio'
+    XLSX.writeFile(wb, `plantilla-unidades-${safeName}.xlsx`)
   }
 
   async function handleFile(file: File) {
@@ -191,30 +229,63 @@ export function UnitsImportWizard({ administrationId, propertyId, propertyName }
       </div>
 
       {step === 'upload' ? (
-        <div className="glass-card rounded-2xl p-8 text-center space-y-4 border-dashed border-2 border-primary/30">
-          <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center">
-            <FileSpreadsheet className="w-6 h-6" />
+        <div className="space-y-3">
+          <div className="glass-card rounded-2xl p-8 text-center space-y-4 border-dashed border-2 border-primary/30">
+            <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+              <FileSpreadsheet className="w-6 h-6" />
+            </div>
+            <div>
+              <h3 className="font-medium text-foreground">Subí tu planilla</h3>
+              <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+                Excel (.xlsx, .xls) o CSV con tus unidades y titulares. La IA mapea las columnas
+                automáticamente. Si una columna no la entiende, podés corregirla manualmente.
+              </p>
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".xlsx,.xls,.csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                if (f) void handleFile(f)
+              }}
+            />
+            <div className="flex items-center justify-center gap-2 flex-wrap">
+              <Button onClick={() => fileInputRef.current?.click()}>
+                <UploadCloud className="w-4 h-4 mr-1.5" />
+                Seleccionar archivo
+              </Button>
+              <Button variant="ghost" size="sm" onClick={downloadTemplate}>
+                <Download className="w-3.5 h-3.5 mr-1.5" />
+                Descargar plantilla de ejemplo
+              </Button>
+            </div>
           </div>
-          <div>
-            <h3 className="font-medium text-foreground">Subí tu planilla</h3>
-            <p className="text-xs text-muted-foreground mt-1">
-              Excel (.xlsx, .xls) o CSV con tus unidades y titulares. La IA mapea las columnas solas.
+
+          {/* Tips de columnas reconocidas */}
+          <div className="glass-card rounded-2xl p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Sparkles className="w-3.5 h-3.5 text-primary" />
+              <span className="text-xs font-medium text-foreground">Columnas que la IA reconoce</span>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <span>• Código de unidad <span className="text-rose-700">(obligatorio)</span></span>
+              <span>• Tipo (depto/casa/local/etc)</span>
+              <span>• Piso</span>
+              <span>• Superficie (m²)</span>
+              <span>• Alícuota (% o decimal)</span>
+              <span>• Nombre del titular</span>
+              <span>• Tipo titular (propietario/inquilino)</span>
+              <span>• CUIT / DNI</span>
+              <span>• Email</span>
+              <span>• Teléfono</span>
+            </div>
+            <p className="mt-2 text-[10px] text-muted-foreground italic">
+              Las columnas que no matchean se marcan como "ignorar" — podés cambiar el mapeo
+              antes de confirmar. Lo que no esté en tu Excel queda en blanco para que lo completes después.
             </p>
           </div>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls,.csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0]
-              if (f) void handleFile(f)
-            }}
-          />
-          <Button onClick={() => fileInputRef.current?.click()}>
-            <UploadCloud className="w-4 h-4 mr-1.5" />
-            Seleccionar archivo
-          </Button>
         </div>
       ) : null}
 

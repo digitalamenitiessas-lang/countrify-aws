@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import type { IAdminCapability, IAdminLiquidationItem, IAdminLiquidationRunDetail, IAdminLiquidationStatus } from '@/lib/types'
 import { Money } from '@/components/admin-backoffice/shared/money'
 import { LiquidationStatusActions } from '@/components/admin-backoffice/liquidaciones/liquidation-status-actions'
+import { NotifyResidentsBlock } from '@/components/admin-backoffice/liquidaciones/notify-residents-block'
 import { QuickPayButton } from '@/components/admin-backoffice/cobranzas/quick-pay-button'
 import { RegisterCollectionForm } from '@/components/admin-backoffice/cobranzas/register-collection-form'
 import { ShareLinkButton } from '@/components/admin-backoffice/cobranzas/share-link-button'
@@ -139,6 +140,18 @@ export function LiquidationDetail({ run, userCapabilities }: Props) {
           userCapabilities={userCapabilities}
         />
       </section>
+
+      {/* ----- Wizard de notificación post-emisión ----- */}
+      <NotifyResidentsBlock
+        runId={run.id}
+        status={run.status}
+        propertyName={run.managedPropertyName}
+        monthLabel={monthLabel}
+        periodYear={run.periodYear}
+        firstDueDate={run.dueDates[0]?.date ?? null}
+        totalUnits={run.totalUnits}
+        itemsWithBalanceCount={run.items.filter((it) => it.balanceRemaining > 0.02).length}
+      />
 
       {/* ----- Estado de cuenta del consorcio (balance de caja) ----- */}
       <section className="glass-card rounded-2xl overflow-hidden">

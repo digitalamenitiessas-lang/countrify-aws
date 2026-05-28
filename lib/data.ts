@@ -802,7 +802,35 @@ export async function getConsorcioDashboardData(profileId: string): Promise<Cons
   const assignmentsRows = await getConsorcioAssignmentsForProfileFromPostgres(profileId)
   const assignments = assignmentsRows.map(mapBuildingAssignment)
   const buildingIds = assignments.map((assignment) => assignment.buildingId)
+  return loadConsorcioDashboardForBuildings({ buildingIds, assignments })
+}
 
+/**
+ * Variante por administración: deriva los buildings de la administración (consistente con
+ * el resto del backoffice iadmin) y reutiliza el pipeline de expedientes.
+ * `assignments` queda vacío porque ese concepto pertenece al perfil, no a la administración.
+ */
+export async function getConsorcioDashboardDataByAdministration(
+  administrationId: string,
+): Promise<ConsorcioDashboardData> {
+  const propertyRows = await getIAdminManagedPropertiesByAdministrationFromPostgres(administrationId)
+  const buildingIds = Array.from(
+    new Set(
+      propertyRows
+        .map((row) => row.building_id)
+        .filter((id): id is string => typeof id === 'string' && id.length > 0),
+    ),
+  )
+  return loadConsorcioDashboardForBuildings({ buildingIds, assignments: [] })
+}
+
+async function loadConsorcioDashboardForBuildings({
+  buildingIds,
+  assignments,
+}: {
+  buildingIds: string[]
+  assignments: BuildingAdminAssignment[]
+}): Promise<ConsorcioDashboardData> {
   if (buildingIds.length === 0) {
     return {
       managedBuildings: [],

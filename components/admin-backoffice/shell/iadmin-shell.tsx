@@ -1,10 +1,18 @@
+import { cookies } from 'next/headers'
 import Link from 'next/link'
-import { Building2, ChevronRight } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import type { IAdminContext } from '@/lib/types'
-import { IAdminBalanceHint, IAdminNav, IAdminNotificationsBadge } from './iadmin-nav'
+import { getIAdminPortfolio } from '@/lib/data'
+import { IAdminSidebar } from './iadmin-sidebar'
+import { IAdminMobileTopBar } from './iadmin-mobile-topbar'
+import { HeaderPropertyPicker } from './header-property-picker'
+import type { SwitcherProperty } from './consorcio-switcher'
+import { QuickActionsFab } from './quick-actions-fab'
 import { ChatWidget } from '@/components/ai/chat-widget'
 
-export function IAdminShell({
+const CURRENT_PROPERTY_COOKIE = 'currentPropertyId'
+
+export async function IAdminShell({
   context,
   children,
   breadcrumbs,
@@ -15,60 +23,86 @@ export function IAdminShell({
 }) {
   const primary = context.primary
   const allowedCapabilities = primary?.capabilities ?? []
+  const administrationName = primary?.administration.name ?? 'Sin administracion'
+
+  // Defensive load.
+  let switcherProperties: SwitcherProperty[] = []
+  if (primary) {
+    try {
+      const portfolio = await getIAdminPortfolio(primary.administration.id)
+      switcherProperties = (portfolio?.properties ?? []).map((p) => ({
+        id: p.id,
+        displayName: p.displayName,
+        buildingName: p.buildingName,
+        buildingAddress: p.buildingAddress ?? null,
+        totalUnits: p.totalUnits ?? null,
+      }))
+    } catch (error) {
+      console.error('[iadmin-shell] getIAdminPortfolio failed:', error)
+    }
+  }
+
+  const cookieStore = await cookies()
+  const cookiePropertyId = cookieStore.get(CURRENT_PROPERTY_COOKIE)?.value ?? null
 
   return (
     <>
-    <div className="min-h-screen bg-background pt-16">
-      <div className="mx-auto flex max-w-[1400px] gap-6 px-6 py-6">
-        <aside className="hidden lg:block w-64 shrink-0">
-          <div className="glass-card sticky top-20 rounded-2xl">
-            <div className="border-b border-border/40 px-4 py-4">
-              <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-primary">
-                <Building2 className="w-3.5 h-3.5" />
-                Backoffice administrador
-              </div>
-              <div className="mt-1 text-base font-semibold text-foreground">
-                {primary?.administration.name ?? 'Sin administracion'}
-              </div>
-              {primary ? (
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  Rol: {primary.operationalRole}
-                </div>
-              ) : null}
+      <div className="min-h-screen bg-background pt-16">
+        <div className="mx-auto flex max-w-[1400px] gap-6 px-4 py-4 md:px-6 md:py-6">
+          <aside className="hidden lg:block w-60 shrink-0">
+            <div className="sticky top-20">
+              <IAdminSidebar
+                administrationName={administrationName}
+                allowedCapabilities={allowedCapabilities}
+                properties={switcherProperties}
+                cookiePropertyId={cookiePropertyId}
+              />
             </div>
-            <IAdminNav allowedCapabilities={allowedCapabilities} />
-          </div>
-        </aside>
+          </aside>
 
-        <main className="min-w-0 flex-1">
-          <header className="mb-6 flex items-center justify-between">
-            <nav className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Link href="/iadmin" className="hover:text-foreground">
-                IAdmin
-              </Link>
-              {breadcrumbs?.map((crumb, idx) => (
-                <span key={`${crumb.label}-${idx}`} className="flex items-center gap-1.5">
-                  <ChevronRight className="w-3 h-3" />
-                  {crumb.href ? (
-                    <Link href={crumb.href} className="hover:text-foreground">
-                      {crumb.label}
-                    </Link>
-                  ) : (
-                    <span className="text-foreground">{crumb.label}</span>
-                  )}
-                </span>
-              ))}
-            </nav>
-            <div className="flex items-center gap-3">
-              <IAdminBalanceHint />
-              <IAdminNotificationsBadge />
-            </div>
-          </header>
+          <main className="min-w-0 flex-1">
+            <IAdminMobileTopBar
+              administrationName={administrationName}
+              operationalRole={primary?.operationalRole ?? null}
+              allowedCapabilities={allowedCapabilities}
+              properties={switcherProperties}
+              cookiePropertyId={cookiePropertyId}
+            />
 
-          {children}
-        </main>
+            {/* Header: solo selector de country + breadcrumb (sin "IAdmin" base ni campanita) */}
+            <header className="mb-4 md:mb-6 flex items-center justify-between gap-3 flex-wrap">
+              <nav className="flex items-center gap-1.5 text-xs text-muted-foreground min-w-0 overflow-x-auto">
+                {breadcrumbs && breadcrumbs.length > 0 ? (
+                  breadcrumbs.map((crumb, idx) => (
+                    <span key={`${crumb.label}-${idx}`} className="flex items-center gap-1.5 shrink-0">
+                      {idx > 0 ? <ChevronRight className="w-3 h-3" /> : null}
+                      {crumb.href ? (
+                        <Link href={crumb.href} className="hover:text-foreground">
+                          {crumb.label}
+                        </Link>
+                      ) : (
+                        <span className="text-foreground">{crumb.label}</span>
+                      )}
+                    </span>
+                  ))
+                ) : (
+                  <span className="text-muted-foreground/60">&nbsp;</span>
+                )}
+              </nav>
+              <div className="shrink-0">
+                <HeaderPropertyPicker
+                  properties={switcherProperties}
+                  cookiePropertyId={cookiePropertyId}
+                />
+              </div>
+            </header>
+
+            {children}
+          </main>
+        </div>
       </div>
-    </div>
+
+      <QuickActionsFab allowedCapabilities={allowedCapabilities} />
 
       <ChatWidget
         suggestions={[
