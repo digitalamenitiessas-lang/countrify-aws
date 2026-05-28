@@ -39,7 +39,9 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
     !isAllCookie && cookiePropertyId
       ? properties.find((p) => p.id === cookiePropertyId)
       : null
-  const active = activeFromUrl ?? activeFromCookie ?? null
+  // Con un solo country, lo tratamos como activo por defecto (no hay nada que elegir).
+  const soleProperty = properties.length === 1 ? properties[0] : null
+  const active = activeFromUrl ?? activeFromCookie ?? soleProperty
 
   // Si solo hay un consorcio y nada activo, no hace falta dropdown.
   const interactive = properties.length > 1

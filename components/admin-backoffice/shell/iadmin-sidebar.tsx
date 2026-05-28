@@ -128,7 +128,9 @@ export function IAdminSidebar({
     !isAllCookie && cookiePropertyId
       ? properties.find((p) => p.id === cookiePropertyId)
       : null
-  const activeProperty = activeFromUrl ?? activeFromCookie ?? null
+  // Con un solo country, lo tratamos como activo por defecto para mostrar su detalle.
+  const soleProperty = properties.length === 1 ? properties[0] : null
+  const activeProperty = activeFromUrl ?? activeFromCookie ?? soleProperty
 
   const visibleGlobalItems = GLOBAL_ITEMS.filter((item) => allowed.has(item.need))
   const showConsorcioBlock = activeProperty && allowed.has('consorcio.view')
