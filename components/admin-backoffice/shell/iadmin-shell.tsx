@@ -7,7 +7,6 @@ import { IAdminSidebar } from './iadmin-sidebar'
 import { IAdminMobileTopBar } from './iadmin-mobile-topbar'
 import { HeaderPropertyPicker } from './header-property-picker'
 import type { SwitcherProperty } from './consorcio-switcher'
-import { QuickActionsFab } from './quick-actions-fab'
 import { ChatWidget } from '@/components/ai/chat-widget'
 
 const CURRENT_PROPERTY_COOKIE = 'currentPropertyId'
@@ -101,8 +100,6 @@ export async function IAdminShell({
           </main>
         </div>
       </div>
-
-      <QuickActionsFab allowedCapabilities={allowedCapabilities} />
 
       <ChatWidget
         suggestions={[

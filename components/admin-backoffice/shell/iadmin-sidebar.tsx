@@ -10,7 +10,6 @@ import {
   Building2,
   FileSpreadsheet,
   Home,
-  LayoutDashboard,
   Megaphone,
   Receipt,
   Scale,
@@ -39,7 +38,6 @@ type Props = {
 
 const GLOBAL_ITEMS: ReadonlyArray<NavItem> = [
   { href: '/iadmin', label: 'Inicio', icon: Home, need: 'portfolio.view', exact: true },
-  { href: '/iadmin/cartera', label: 'Cartera', icon: LayoutDashboard, need: 'portfolio.view', matchPrefix: '/iadmin/cartera' },
   { href: '/iadmin/gastos', label: 'Gastos', icon: Receipt, need: 'expenses.view', matchPrefix: '/iadmin/gastos' },
   { href: '/iadmin/liquidaciones', label: 'Liquidaciones', icon: ScrollText, need: 'liquidations.view', matchPrefix: '/iadmin/liquidaciones' },
   { href: '/iadmin/cobranzas', label: 'Cobranzas', icon: Wallet, need: 'collections.view', matchPrefix: '/iadmin/cobranzas' },

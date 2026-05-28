@@ -3,14 +3,32 @@ import { cookies } from 'next/headers'
 export const CURRENT_PROPERTY_COOKIE = 'currentPropertyId'
 
 /**
- * Lee la cookie del consorcio activo (currentPropertyId).
- * El valor `null` o el string literal "all" significan "todos los edificios".
- * Validamos contra una lista de IDs permitidos para evitar leakage entre administraciones.
+ * Lee la cookie del consorcio activo (currentPropertyId) y devuelve el ID
+ * por el cual filtrar las páginas cross-cartera.
+ *
+ * Reglas:
+ * - Si el admin solo gestiona un country, ese es el active por default
+ *   (no tiene sentido la vista "todos" cuando hay uno solo).
+ * - Valor literal "all" en cookie → null (= sin filtro, vista consolidada).
+ * - Valor con UUID → si pertenece a allowedPropertyIds, ese; si no, null.
+ * - Sin cookie → si hay un solo country ese, si no null.
  */
 export async function getCurrentPropertyId(allowedPropertyIds: string[]): Promise<string | null> {
   if (allowedPropertyIds.length === 0) return null
+
   const store = await cookies()
   const raw = store.get(CURRENT_PROPERTY_COOKIE)?.value ?? null
-  if (!raw || raw === 'all') return null
-  return allowedPropertyIds.includes(raw) ? raw : null
+
+  // "all" explícito → vista consolidada. Pero si solo hay 1 country, ignoramos
+  // el "all" y filtramos a ese (no hay vista consolidada útil con uno solo).
+  if (raw === 'all') {
+    return allowedPropertyIds.length === 1 ? allowedPropertyIds[0] : null
+  }
+
+  if (raw && allowedPropertyIds.includes(raw)) return raw
+
+  // Sin cookie o cookie inválida: si solo hay un country, ese es el default.
+  if (allowedPropertyIds.length === 1) return allowedPropertyIds[0]
+
+  return null
 }
