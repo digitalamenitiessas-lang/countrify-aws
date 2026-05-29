@@ -353,6 +353,73 @@ export async function callSuperadminCreateConsorcioInPostgres(input: {
   return result.rows[0].result
 }
 
+/**
+ * Promoción inteligente de is_primary tras crear un country. La función SQL
+ * (security definer, owner citify_admin) marca is_primary = NOT exists(grants
+ * previos), así que un grant/assignment huérfano (administración/edificio vacío)
+ * roba el primary y deja al admin viendo algo vacío por default.
+ *
+ * Esta corrección corre como countrify_app (que tiene UPDATE sobre las tablas):
+ * si el admin NO tiene OTRO grant/assignment apuntando a algo CON contenido
+ * (managed_property), promueve el recién creado a primary y demotea los demás.
+ * Si ya tiene uno con contenido, deja todo como está. Idempotente.
+ */
+export async function promoteConsorcioPrimaryInPostgres(input: {
+  adminProfileId: string
+  administrationId: string
+  buildingId: string
+}): Promise<void> {
+  const { adminProfileId, administrationId, buildingId } = input
+
+  // Grants: promover el nuevo si no hay otro grant a una administración con contenido.
+  await pgQuery(
+    `
+      update countrify.iadmin_role_grants g
+         set is_primary = (g.administration_id = $2)
+       where g.profile_id = $1
+         and not exists (
+           select 1
+           from countrify.iadmin_role_grants og
+           join countrify.iadmin_managed_properties mp on mp.administration_id = og.administration_id
+           where og.profile_id = $1 and og.administration_id <> $2
+         )
+    `,
+    [adminProfileId, administrationId],
+  )
+
+  // Assignments: idem por building con contenido.
+  await pgQuery(
+    `
+      update countrify.building_admin_assignments a
+         set is_primary = (a.building_id = $2)
+       where a.profile_id = $1
+         and not exists (
+           select 1
+           from countrify.building_admin_assignments oa
+           join countrify.iadmin_managed_properties mp on mp.building_id = oa.building_id
+           where oa.profile_id = $1 and oa.building_id <> $2
+         )
+    `,
+    [adminProfileId, buildingId],
+  )
+
+  // profiles.building_id: apuntar al nuevo solo si no hay otro building con contenido.
+  await pgQuery(
+    `
+      update countrify.profiles p
+         set building_id = $2
+       where p.id = $1
+         and not exists (
+           select 1
+           from countrify.building_admin_assignments oa
+           join countrify.iadmin_managed_properties mp on mp.building_id = oa.building_id
+           where oa.profile_id = $1 and oa.building_id <> $2
+         )
+    `,
+    [adminProfileId, buildingId],
+  )
+}
+
 export async function getBuildingByIdFromPostgres(
   buildingId: string,
 ): Promise<{ id: string; name: string } | null> {

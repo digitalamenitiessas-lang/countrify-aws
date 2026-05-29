@@ -28,6 +28,7 @@ import {
   assignBuildingAdminInPostgres,
   assignIAdminRoleGrantInPostgres,
   callSuperadminCreateConsorcioInPostgres,
+  promoteConsorcioPrimaryInPostgres,
   createBusinessInPostgres,
   findUnitByPropertyAndCodeIlikeFromPostgres,
   getAdministrationIdByBuildingFromPostgres,
@@ -501,6 +502,14 @@ export async function createManagedProperty(
   })
 
   const result = createManagedPropertyResultSchema.parse(data)
+
+  // Promoción inteligente de is_primary: corrige el caso del grant/assignment
+  // huérfano que dejaba al admin viendo una administración vacía por default.
+  await promoteConsorcioPrimaryInPostgres({
+    adminProfileId: parsed.adminProfileId,
+    administrationId: result.administration_id,
+    buildingId: result.building_id,
+  })
 
   revalidatePath('/superadmin')
   revalidatePath('/iadmin')
