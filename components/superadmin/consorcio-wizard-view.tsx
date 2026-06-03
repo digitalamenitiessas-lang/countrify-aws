@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { MapPin } from 'lucide-react'
 import { toast } from 'sonner'
@@ -69,6 +69,8 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
   const [createdConsorcio, setCreatedConsorcio] = useState<CreatedConsorcio | null>(null)
   const [administrationNameTouched, setAdministrationNameTouched] = useState(false)
   const [consorcioLocationSearching, setConsorcioLocationSearching] = useState(false)
+  const [mapRecenterKey, setMapRecenterKey] = useState(0)
+  const mapCardRef = useRef<HTMLDivElement>(null)
 
   const currentConsorcioStep = CONSORCIO_WIZARD_STEPS[consorcioStepIndex]
   const selectedConsorcioAdmin =
@@ -145,6 +147,12 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
           latitude: String(parseFloat(data[0].lat)),
           longitude: String(parseFloat(data[0].lon)),
         }))
+        // Recentrar el mapa al punto encontrado y traerlo a la vista, así no
+        // hay que arrastrarlo/scrollear para verlo.
+        setMapRecenterKey((key) => key + 1)
+        requestAnimationFrame(() => {
+          mapCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        })
         toast.success('Ubicacion aproximada encontrada.', { id: 'consorcio-geocode' })
       } else {
         toast.error('No pudimos ubicarla. Puedes marcar el punto manualmente en el mapa.', { id: 'consorcio-geocode' })
@@ -153,6 +161,35 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
       toast.error('Error buscando la direccion.', { id: 'consorcio-geocode' })
     } finally {
       setConsorcioLocationSearching(false)
+    }
+  }
+
+  // Geocoding inverso: cuando se mueve el pin en el mapa, completar de vuelta
+  // la direccion y la localidad a partir de las coordenadas elegidas.
+  async function reverseGeocodeToAddress(lat: number, lng: number) {
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}&zoom=18&addressdetails=1`,
+      )
+      const data = await response.json()
+      const address = data?.address
+      if (!address) return
+
+      const street = [address.road, address.house_number].filter(Boolean).join(' ')
+      const locality =
+        address.suburb || address.neighbourhood || address.city || address.town || address.village || address.county
+
+      setConsorcioDraft((current) => ({
+        ...current,
+        buildingAddress: street || current.buildingAddress,
+        buildingLocality: locality || current.buildingLocality,
+      }))
+
+      if (street) {
+        toast.success('Dirección actualizada desde el punto del mapa.', { id: 'consorcio-reverse-geocode' })
+      }
+    } catch {
+      // Silencioso: si el reverse falla, dejamos las coordenadas igual.
     }
   }
 
@@ -422,7 +459,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
               </div>
             </div>
 
-            <div className="glass-card rounded-2xl p-4 overflow-hidden relative">
+            <div ref={mapCardRef} className="glass-card rounded-2xl p-4 overflow-hidden relative scroll-mt-24">
               <div className="flex flex-col gap-6 lg:flex-row">
                 <div className="flex-1">
                   <h3 className="font-semibold text-foreground mb-2 flex items-center gap-2">
@@ -471,15 +508,17 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
                     <DynamicMap
                       center={consorcioMapLocation ?? [-26.8306, -65.2038]}
                       zoom={consorcioMapLocation ? 16 : 13}
+                      recenterKey={mapRecenterKey}
                       interactive
                       selectedLocation={consorcioMapLocation}
-                      onLocationSelect={(lat, lng) =>
+                      onLocationSelect={(lat, lng) => {
                         setConsorcioDraft((current) => ({
                           ...current,
                           latitude: String(lat),
                           longitude: String(lng),
                         }))
-                      }
+                        void reverseGeocodeToAddress(lat, lng)
+                      }}
                     />
                   </div>
                 </div>
