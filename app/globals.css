@@ -209,17 +209,6 @@
    (navy #112250 / accent #3b507d / terracota #C4733D)
    ============================================================ */
 
-/* Hero con degradado navy y texto claro — corta el "todo blanco" */
-.sa-hero {
-  background: linear-gradient(135deg, #112250 0%, #0a1838 100%);
-  color: #ffffff;
-  border: 1px solid rgba(17, 34, 80, 0.4);
-  box-shadow: 0 10px 30px -12px rgba(17, 34, 80, 0.45);
-}
-.sa-hero .sa-hero-muted {
-  color: rgba(255, 255, 255, 0.72);
-}
-
 /* Header de card con tinte navy degradado — reemplaza el border-b plano */
 .sa-section-head {
   background: linear-gradient(90deg, rgba(17, 34, 80, 0.08), rgba(17, 34, 80, 0.01));

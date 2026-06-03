@@ -34,13 +34,13 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
 
   return (
     <div>
-      <div className="sa-hero rounded-2xl p-6 mb-8">
+      <div className="mb-8">
         <div className="flex items-center gap-2 mb-1">
-          <Shield className="w-4 h-4" />
-          <p className="text-xs font-medium tracking-wider uppercase sa-hero-muted">Panel de super administrador</p>
+          <Shield className="w-4 h-4 text-primary" />
+          <p className="text-xs font-medium tracking-wider uppercase text-primary">Panel de super administrador</p>
         </div>
-        <h1 className="font-serif text-2xl font-bold text-white">Inicio</h1>
-        <p className="text-sm mt-1 sa-hero-muted">Datos en tiempo real.</p>
+        <h1 className="font-serif text-2xl font-bold text-foreground">Resumen para SuperAdmin</h1>
+        <p className="text-sm mt-1 text-muted-foreground">Datos en tiempo real.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
