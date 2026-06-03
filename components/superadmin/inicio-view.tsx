@@ -39,7 +39,7 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
           <Shield className="w-4 h-4" />
           <p className="text-xs font-medium tracking-wider uppercase sa-hero-muted">Panel de super administrador</p>
         </div>
-        <h1 className="font-serif text-2xl font-bold text-white">Resumen operativo de la plataforma</h1>
+        <h1 className="font-serif text-2xl font-bold text-white">Inicio</h1>
         <p className="text-sm mt-1 sa-hero-muted">Datos en tiempo real.</p>
       </div>
 
