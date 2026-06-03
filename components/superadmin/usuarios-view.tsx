@@ -643,7 +643,7 @@ export function UsuariosView({
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border/50" style={{ background: 'rgba(0,0,0,0.03)' }}>
+              <tr className="sa-thead border-b border-border/50">
                 {['Usuario', 'Email', 'Rol', 'Teléfono'].map((h) => (
                   <th key={h} className="text-left px-5 py-3 text-xs text-muted-foreground font-medium uppercase tracking-wider">{h}</th>
                 ))}

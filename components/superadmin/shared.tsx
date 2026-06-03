@@ -39,26 +39,36 @@ export const PROPERTY_KIND_OPTIONS: Array<{ value: IAdminPropertyKind; label: st
 export const PIE_COLORS = ['#112250', '#C4733D', '#666666', '#3b507d'] as const
 
 // ─── Stat Card ───────────────────────────────────────────────────────────────
+const STAT_TONES = {
+  navy: { disc: 'linear-gradient(135deg, #112250, #0a1838)', tint: 'rgba(17,34,80,0.05)' },
+  accent: { disc: 'linear-gradient(135deg, #3b507d, #1f3470)', tint: 'rgba(59,80,125,0.07)' },
+  terra: { disc: 'linear-gradient(135deg, #C4733D, #9c4f24)', tint: 'rgba(196,115,61,0.07)' },
+  green: { disc: 'linear-gradient(135deg, #16a34a, #047857)', tint: 'rgba(16,163,74,0.07)' },
+  amber: { disc: 'linear-gradient(135deg, #f59e0b, #b45309)', tint: 'rgba(245,158,11,0.08)' },
+} as const
+
+export type StatTone = keyof typeof STAT_TONES
+
 export function StatCard({
   label,
   value,
   sub,
   icon: Icon,
+  tone = 'navy',
 }: {
   label: string
   value: number | string
   sub: string
   icon: typeof Shield
+  tone?: StatTone
 }) {
+  const t = STAT_TONES[tone]
   return (
-    <div className="glass-card rounded-xl p-5">
-      <div
-        className="w-10 h-10 rounded-lg flex items-center justify-center mb-4"
-        style={{ background: 'rgba(156,156,156,0.15)', border: '1px solid rgba(0,0,0,0.06)' }}
-      >
-        <Icon className="w-5 h-5 text-primary" />
+    <div className="glass-card rounded-xl p-5" style={{ background: t.tint }}>
+      <div className="sa-icon-disc w-10 h-10 rounded-lg flex items-center justify-center mb-4" style={{ background: t.disc }}>
+        <Icon className="w-5 h-5" />
       </div>
-      <div className="text-2xl font-bold text-foreground">{value}</div>
+      <div className="text-2xl font-bold text-foreground stat-value">{value}</div>
       <div className="text-sm text-foreground mt-0.5">{label}</div>
       <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>
     </div>
@@ -289,7 +299,7 @@ export function BuildingDetail({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Admins */}
         <div className="glass-card rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+          <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
             <Shield className="w-4 h-4 text-primary" />
             <h3 className="font-semibold text-sm text-foreground">Usuario Encargado del Consorcio</h3>
           </div>
@@ -329,7 +339,7 @@ export function BuildingDetail({
 
         {/* Occupancy */}
         <div className="glass-card rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+          <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-primary" />
             <h3 className="font-semibold text-sm text-foreground">Nivel de Ocupación</h3>
           </div>
@@ -359,7 +369,7 @@ export function BuildingDetail({
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
         <div className="glass-card rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+          <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
             <Building2 className="w-4 h-4 text-primary" />
             <h3 className="font-semibold text-sm text-foreground">Configuración del consorcio</h3>
           </div>
@@ -400,7 +410,7 @@ export function BuildingDetail({
         </div>
 
         <div className="glass-card rounded-xl overflow-hidden">
-          <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+          <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
             <Home className="w-4 h-4 text-primary" />
             <h3 className="font-semibold text-sm text-foreground">Administración asociada</h3>
           </div>
@@ -439,7 +449,7 @@ export function BuildingDetail({
 
       {/* Residents table */}
       <div className="glass-card rounded-xl overflow-hidden mt-6">
-        <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+        <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
           <Users className="w-4 h-4 text-primary" />
           <h3 className="font-semibold text-sm text-foreground">Residentes Registrados ({building.registeredNeighbors})</h3>
         </div>
@@ -451,7 +461,7 @@ export function BuildingDetail({
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border/50" style={{ background: 'rgba(0,0,0,0.03)' }}>
+                <tr className="sa-thead border-b border-border/50">
                   {['Nombre', 'Email', 'Piso', 'Unidad', 'Teléfono'].map((h) => (
                     <th key={h} className="text-left px-5 py-3 text-xs text-muted-foreground font-medium uppercase tracking-wider">
                       {h}
@@ -611,7 +621,7 @@ export function BusinessDetail({ business, onBack }: { business: SuperAdminBusin
       </div>
 
       <div className="glass-card rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+        <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
           <Tag className="w-4 h-4 text-primary" />
           <h3 className="font-semibold text-sm text-foreground">Cupones y Promociones ({business.promotions.length})</h3>
         </div>
@@ -762,10 +772,10 @@ export function computeDashboardStats(data: SuperAdminDashboardData): DashboardS
 export function PlatformHealthRow({ stats }: { stats: DashboardStats }) {
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      <StatCard label="Ocupación promedio" value={stats.avgOccupancy} sub="% promedio plataforma" icon={TrendingUp} />
-      <StatCard label="Promociones activas" value={stats.activePromotions} sub={`${stats.expiredPromotions} vencidas`} icon={Tag} />
-      <StatCard label="Canjes totales" value={stats.totalRedemptions} sub="registros acumulados" icon={CheckCircle} />
-      <StatCard label="Sin administrador" value={stats.buildingsWithoutAdmin} sub="consorcios sin encargado" icon={AlertTriangle} />
+      <StatCard label="Ocupación promedio" value={stats.avgOccupancy} sub="% promedio plataforma" icon={TrendingUp} tone="accent" />
+      <StatCard label="Promociones activas" value={stats.activePromotions} sub={`${stats.expiredPromotions} vencidas`} icon={Tag} tone="terra" />
+      <StatCard label="Canjes totales" value={stats.totalRedemptions} sub="registros acumulados" icon={CheckCircle} tone="green" />
+      <StatCard label="Sin administrador" value={stats.buildingsWithoutAdmin} sub="consorcios sin encargado" icon={AlertTriangle} tone="amber" />
     </div>
   )
 }

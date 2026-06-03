@@ -48,12 +48,19 @@ export function SuperAdminSidebar() {
 
   return (
     <div className="flex flex-col gap-1">
-      <div className="px-3 pb-2">
-        <div className="text-[10px] uppercase tracking-wider text-primary/80 font-semibold flex items-center gap-1.5">
-          <Shield className="w-3 h-3" />
-          Super administrador
+      <div className="px-3 pb-3 mb-1">
+        <div className="flex items-center gap-2">
+          <div
+            className="sa-icon-disc w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
+            style={{ background: 'linear-gradient(135deg, #112250, #0a1838)' }}
+          >
+            <Shield className="w-3.5 h-3.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] uppercase tracking-wider text-primary/80 font-semibold">Super administrador</div>
+            <div className="text-sm font-semibold text-foreground truncate leading-tight">Countrify</div>
+          </div>
         </div>
-        <div className="text-sm font-semibold text-foreground truncate mt-0.5">Countrify</div>
       </div>
 
       <nav className="flex flex-col gap-px">

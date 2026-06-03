@@ -34,13 +34,13 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
 
   return (
     <div>
-      <div className="glass-card rounded-2xl p-6 mb-8">
+      <div className="sa-hero rounded-2xl p-6 mb-8">
         <div className="flex items-center gap-2 mb-1">
-          <Shield className="w-4 h-4 text-primary" />
-          <p className="text-xs text-primary font-medium tracking-wider uppercase">Panel de super administrador</p>
+          <Shield className="w-4 h-4" />
+          <p className="text-xs font-medium tracking-wider uppercase sa-hero-muted">Panel de super administrador</p>
         </div>
-        <h1 className="font-serif text-2xl font-bold text-foreground">Resumen operativo de la plataforma</h1>
-        <p className="text-muted-foreground text-sm mt-1">Datos en tiempo real.</p>
+        <h1 className="font-serif text-2xl font-bold text-white">Resumen operativo de la plataforma</h1>
+        <p className="text-sm mt-1 sa-hero-muted">Datos en tiempo real.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -49,20 +49,22 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
           value={data.users.length}
           sub={`${data.users.filter((u) => u.role === 'vecino').length} residentes · ${data.users.filter((u) => u.role === 'propietario').length} propietarios`}
           icon={Users}
+          tone="navy"
         />
-        <StatCard label="Consorcios" value={data.buildings.length} sub="Countries adheridos" icon={Home} />
+        <StatCard label="Consorcios" value={data.buildings.length} sub="Countries adheridos" icon={Home} tone="accent" />
         <StatCard
           label="Negocios"
           value={data.businesses.length}
           sub={`${data.users.filter((u) => u.role === 'negocio_admin').length} admins`}
           icon={Building2}
+          tone="terra"
         />
-        <StatCard label="Canjes registrados" value={totalUsage} sub="Desde promotion_redemptions" icon={TrendingUp} />
+        <StatCard label="Canjes registrados" value={totalUsage} sub="Desde promotion_redemptions" icon={TrendingUp} tone="green" />
       </div>
 
       {/* Usuarios por country */}
       <div className="glass-card rounded-xl overflow-hidden mb-8">
-        <div className="px-5 py-4 border-b border-border/40 flex items-center gap-2">
+        <div className="sa-section-head px-5 py-4 border-b border-border/40 flex items-center gap-2">
           <Users className="w-4 h-4 text-primary" />
           <h3 className="font-semibold text-sm text-foreground">Usuarios por country</h3>
         </div>
@@ -72,7 +74,7 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border/50" style={{ background: 'rgba(0,0,0,0.03)' }}>
+                <tr className="sa-thead border-b border-border/50">
                   {['Country', 'Vecinos', 'Propietarios', 'Residentes', 'Admins', 'Ocupación'].map((h) => (
                     <th key={h} className="text-left px-5 py-3 text-xs text-muted-foreground font-medium uppercase tracking-wider">
                       {h}
