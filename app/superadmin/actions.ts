@@ -45,6 +45,13 @@ import {
   insertUnitFromCrudInPostgres,
   upsertUnitProfileMembershipInPostgres,
 } from '@/lib/db/iadmin-writes'
+import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import {
+  analyzeUnitsColumns,
+  executeUnitsImport,
+  type AnalyzeColumnsResult,
+  type ImportResult,
+} from '@/lib/iadmin/units-import-core'
 
 function avatarFromName(fullName: string) {
   return fullName
@@ -940,4 +947,68 @@ export async function createBusinessWithAdmin(input: z.input<typeof createBusine
 
   revalidatePath('/superadmin')
   return { businessId: business.id, profileId }
+}
+
+// ─── Carga de padrón de unidades (post-alta de consorcio) ────────────────────
+// Reutiliza el motor compartido de IAdmin pero autorizando como super_admin.
+// El superadmin deja el consorcio poblado con unidades + alícuotas + titulares
+// para entregarlo llave en mano al admin del consorcio.
+
+const analyzeConsorcioUnitsSchema = z.object({
+  administrationId: z.string().uuid(),
+  propertyId: z.string().uuid(),
+  headers: z.array(z.string()).min(1),
+  sampleRows: z.array(z.record(z.unknown())).min(1).max(8),
+})
+
+export async function analyzeConsorcioUnitsColumns(
+  input: z.input<typeof analyzeConsorcioUnitsSchema>,
+): Promise<AnalyzeColumnsResult> {
+  const parsed = analyzeConsorcioUnitsSchema.parse(input)
+  await requireProfile(['super_admin'])
+
+  return analyzeUnitsColumns({ headers: parsed.headers, sampleRows: parsed.sampleRows })
+}
+
+const importConsorcioUnitsSchema = z.object({
+  administrationId: z.string().uuid(),
+  propertyId: z.string().uuid(),
+  mapping: z.record(z.string()),
+  rows: z.array(z.record(z.unknown())).min(1).max(500),
+  replaceActiveHolders: z.boolean().optional().default(true),
+})
+
+export async function importConsorcioUnits(
+  input: z.input<typeof importConsorcioUnitsSchema>,
+): Promise<ImportResult> {
+  const parsed = importConsorcioUnitsSchema.parse(input)
+  const { profile } = await requireProfile(['super_admin'])
+
+  const result = await executeUnitsImport({
+    propertyId: parsed.propertyId,
+    mapping: parsed.mapping,
+    rows: parsed.rows,
+    replaceActiveHolders: parsed.replaceActiveHolders,
+  })
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_managed_properties',
+    entityId: parsed.propertyId,
+    action: 'bulk_import.units',
+    metadata: {
+      source: 'superadmin',
+      units_created: result.unitsCreated,
+      units_updated: result.unitsUpdated,
+      holders_created: result.holdersCreated,
+      holders_skipped: result.holdersSkipped,
+      skipped_rows: result.skippedRows.length,
+    },
+  })
+
+  revalidatePath('/superadmin')
+  revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
+
+  return result
 }

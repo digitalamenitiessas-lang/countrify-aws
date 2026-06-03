@@ -13,10 +13,30 @@ import {
   type ImportTargetField,
 } from '@/app/iadmin/consorcios/[id]/importar/actions'
 
+type AnalyzeAction = (input: {
+  administrationId: string
+  propertyId: string
+  headers: string[]
+  sampleRows: Array<Record<string, unknown>>
+}) => Promise<AnalyzeColumnsResult>
+
+type ImportAction = (input: {
+  administrationId: string
+  propertyId: string
+  mapping: Record<string, ImportTargetField>
+  rows: Array<Record<string, unknown>>
+  replaceActiveHolders: boolean
+}) => Promise<ImportResult>
+
 type Props = {
   administrationId: string
   propertyId: string
   propertyName: string
+  /** Acciones inyectables. Por defecto usa las de IAdmin; superadmin pasa las suyas. */
+  analyzeAction?: AnalyzeAction
+  importAction?: ImportAction
+  /** Callback opcional tras una importación exitosa (ej. "ir al consorcio"). */
+  onDone?: (result: ImportResult) => void
 }
 
 type Step = 'upload' | 'map' | 'preview' | 'done'
@@ -35,7 +55,14 @@ const TARGET_OPTIONS: Array<{ value: ImportTargetField; label: string }> = [
   { value: 'holder_phone', label: 'Teléfono' },
 ]
 
-export function UnitsImportWizard({ administrationId, propertyId, propertyName }: Props) {
+export function UnitsImportWizard({
+  administrationId,
+  propertyId,
+  propertyName,
+  analyzeAction = analyzeImportColumns,
+  importAction = importUnitsAndHolders,
+  onDone,
+}: Props) {
   const [step, setStep] = useState<Step>('upload')
   const [fileName, setFileName] = useState<string | null>(null)
   const [headers, setHeaders] = useState<string[]>([])
@@ -116,7 +143,7 @@ export function UnitsImportWizard({ administrationId, propertyId, propertyName }
       // Auto-analyze con IA: primeras 5 filas de muestra
       setAiBusy(true)
       try {
-        const { mapping: aiMapping } = await analyzeImportColumns({
+        const { mapping: aiMapping } = await analyzeAction({
           administrationId,
           propertyId,
           headers: h,
@@ -160,7 +187,7 @@ export function UnitsImportWizard({ administrationId, propertyId, propertyName }
     }
     startTransition(async () => {
       try {
-        const r = await importUnitsAndHolders({
+        const r = await importAction({
           administrationId,
           propertyId,
           mapping,
@@ -170,6 +197,7 @@ export function UnitsImportWizard({ administrationId, propertyId, propertyName }
         setResult(r)
         setStep('done')
         toast.success(`Importadas ${r.unitsCreated} unidades nuevas, ${r.unitsUpdated} actualizadas.`)
+        onDone?.(r)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Error en la importación')
       }
