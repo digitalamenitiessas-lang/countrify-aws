@@ -6,12 +6,11 @@ import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import {
   analyzeUnitsColumns,
   executeUnitsImport,
-  type AnalyzeColumnsResult,
-  type ImportResult,
-  type ImportTargetField,
 } from '@/lib/iadmin/units-import-core'
-
-export type { AnalyzeColumnsResult, ImportResult, ImportTargetField }
+import type {
+  AnalyzeColumnsResult,
+  ImportResult,
+} from '@/lib/iadmin/units-import-core'
 
 const analyzeSchema = z.object({
   administrationId: z.string().uuid(),

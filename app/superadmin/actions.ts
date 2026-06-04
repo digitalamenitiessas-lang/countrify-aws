@@ -49,8 +49,10 @@ import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import {
   analyzeUnitsColumns,
   executeUnitsImport,
-  type AnalyzeColumnsResult,
-  type ImportResult,
+} from '@/lib/iadmin/units-import-core'
+import type {
+  AnalyzeColumnsResult,
+  ImportResult,
 } from '@/lib/iadmin/units-import-core'
 
 function avatarFromName(fullName: string) {

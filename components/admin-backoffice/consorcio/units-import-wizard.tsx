@@ -8,10 +8,12 @@ import { Button } from '@/components/ui/button'
 import {
   analyzeImportColumns,
   importUnitsAndHolders,
-  type AnalyzeColumnsResult,
-  type ImportResult,
-  type ImportTargetField,
 } from '@/app/iadmin/consorcios/[id]/importar/actions'
+import type {
+  AnalyzeColumnsResult,
+  ImportResult,
+  ImportTargetField,
+} from '@/lib/iadmin/units-import-core'
 
 type AnalyzeAction = (input: {
   administrationId: string
