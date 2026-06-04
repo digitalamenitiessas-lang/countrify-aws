@@ -18,10 +18,10 @@
 --     (típicamente en un re-emit), los recargos vuelven a quedar libres y se
 --     re-absorben en la próxima emisión.
 
-alter table public.iadmin_unit_ledger_entries
+alter table countrify.iadmin_unit_ledger_entries
   add column if not exists superseded_by_item_id uuid
-  references public.iadmin_liquidation_items(id) on delete set null;
+  references countrify.iadmin_liquidation_items(id) on delete set null;
 
 create index if not exists iadmin_ledger_superseded_by_item_idx
-  on public.iadmin_unit_ledger_entries (superseded_by_item_id)
+  on countrify.iadmin_unit_ledger_entries (superseded_by_item_id)
   where superseded_by_item_id is not null;

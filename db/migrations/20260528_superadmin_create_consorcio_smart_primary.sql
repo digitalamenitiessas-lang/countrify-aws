@@ -15,7 +15,7 @@
 -- romperle el flow.
 -- ============================================================================
 
-create or replace function public.superadmin_create_consorcio(
+create or replace function countrify.superadmin_create_consorcio(
   building_name text,
   building_address text,
   building_total_units integer,
@@ -27,7 +27,7 @@ create or replace function public.superadmin_create_consorcio(
   administration_contact_email text default null,
   administration_contact_phone text default null,
   property_display_name text default null,
-  property_kind public.iadmin_property_kind default 'consorcio',
+  property_kind countrify.iadmin_property_kind default 'consorcio',
   property_tax_id text default null,
   property_managed_since date default null,
   property_management_fee_pct numeric default null,
@@ -38,14 +38,14 @@ create or replace function public.superadmin_create_consorcio(
 returns jsonb
 language plpgsql
 security definer
-set search_path = public
+set search_path = countrify, public
 as $$
 declare
   v_building_id uuid;
   v_administration_id uuid;
   v_managed_property_id uuid;
   v_existing_building_id uuid;
-  v_admin_role public.app_role;
+  v_admin_role countrify.app_role;
   v_has_nonempty_grant boolean;
   v_has_nonempty_assignment boolean;
   v_promote_grant boolean;
@@ -79,7 +79,7 @@ begin
 
   select b.id
   into v_existing_building_id
-  from public.buildings b
+  from countrify.buildings b
   where regexp_replace(lower(trim(coalesce(b.name, ''))), '\s+', ' ', 'g') = v_normalized_name
     and regexp_replace(lower(trim(coalesce(b.address, ''))), '\s+', ' ', 'g') = v_normalized_address
   limit 1;
@@ -90,7 +90,7 @@ begin
 
   select p.role
   into v_admin_role
-  from public.profiles p
+  from countrify.profiles p
   where p.id = admin_profile_id;
 
   if v_admin_role is null then
@@ -105,7 +105,7 @@ begin
   -- Crear building + administration + managed_property
   -- ───────────────────────────────────────────────────────────────────────
   with inserted_building as (
-    insert into public.buildings (
+    insert into countrify.buildings (
       name,
       address,
       total_units,
@@ -126,7 +126,7 @@ begin
   from inserted_building;
 
   with inserted_administration as (
-    insert into public.iadmin_administrations (
+    insert into countrify.iadmin_administrations (
       name,
       legal_name,
       tax_id,
@@ -149,7 +149,7 @@ begin
   from inserted_administration;
 
   with inserted_property as (
-    insert into public.iadmin_managed_properties (
+    insert into countrify.iadmin_managed_properties (
       administration_id,
       building_id,
       display_name,
@@ -183,8 +183,8 @@ begin
   -- ¿El admin tiene ya una assignment a un building "real" (con units)?
   select exists(
     select 1
-      from public.building_admin_assignments baa
-      join public.buildings b on b.id = baa.building_id
+      from countrify.building_admin_assignments baa
+      join countrify.buildings b on b.id = baa.building_id
      where baa.profile_id = admin_profile_id
        and coalesce(b.total_units, 0) > 0
   )
@@ -195,13 +195,13 @@ begin
 
   if v_promote_assignment then
     -- Desmarcar todas las primary existentes del admin antes de insertar la nueva.
-    update public.building_admin_assignments
+    update countrify.building_admin_assignments
        set is_primary = false
      where profile_id = admin_profile_id
        and is_primary = true;
   end if;
 
-  insert into public.building_admin_assignments (
+  insert into countrify.building_admin_assignments (
     profile_id,
     building_id,
     is_primary
@@ -214,7 +214,7 @@ begin
 
   -- Sincronizar el building_id del profile si la nueva pasa a primary.
   if v_promote_assignment then
-    update public.profiles
+    update countrify.profiles
        set building_id = v_building_id
      where id = admin_profile_id;
   end if;
@@ -225,8 +225,8 @@ begin
   -- ¿El admin tiene ya un grant a una administración con propiedades activas?
   select exists(
     select 1
-      from public.iadmin_role_grants g
-      join public.iadmin_managed_properties mp on mp.administration_id = g.administration_id
+      from countrify.iadmin_role_grants g
+      join countrify.iadmin_managed_properties mp on mp.administration_id = g.administration_id
      where g.profile_id = admin_profile_id
        and mp.is_active = true
   )
@@ -235,13 +235,13 @@ begin
   v_promote_grant := not v_has_nonempty_grant;
 
   if v_promote_grant then
-    update public.iadmin_role_grants
+    update countrify.iadmin_role_grants
        set is_primary = false
      where profile_id = admin_profile_id
        and is_primary = true;
   end if;
 
-  insert into public.iadmin_role_grants (
+  insert into countrify.iadmin_role_grants (
     administration_id,
     profile_id,
     operational_role,
@@ -257,7 +257,7 @@ begin
   -- ───────────────────────────────────────────────────────────────────────
   -- Audit log
   -- ───────────────────────────────────────────────────────────────────────
-  insert into public.iadmin_audit_logs (
+  insert into countrify.iadmin_audit_logs (
     administration_id,
     actor_profile_id,
     entity_type,
@@ -288,7 +288,7 @@ begin
 end;
 $$;
 
-revoke all on function public.superadmin_create_consorcio(
+revoke all on function countrify.superadmin_create_consorcio(
   text,
   text,
   integer,
@@ -300,7 +300,7 @@ revoke all on function public.superadmin_create_consorcio(
   text,
   text,
   text,
-  public.iadmin_property_kind,
+  countrify.iadmin_property_kind,
   text,
   date,
   numeric,
@@ -309,7 +309,7 @@ revoke all on function public.superadmin_create_consorcio(
   uuid
 ) from public, anon, authenticated;
 
-grant execute on function public.superadmin_create_consorcio(
+grant execute on function countrify.superadmin_create_consorcio(
   text,
   text,
   integer,
@@ -321,7 +321,7 @@ grant execute on function public.superadmin_create_consorcio(
   text,
   text,
   text,
-  public.iadmin_property_kind,
+  countrify.iadmin_property_kind,
   text,
   date,
   numeric,

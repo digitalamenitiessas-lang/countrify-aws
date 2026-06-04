@@ -19,19 +19,19 @@
 
 -- 1. unit_id opcional en gastos. on delete set null: si se borra la unidad,
 --    el gasto deja de ser particular (no se pierde el registro contable).
-alter table public.iadmin_expenses
+alter table countrify.iadmin_expenses
   add column if not exists unit_id uuid
-  references public.iadmin_units(id) on delete set null;
+  references countrify.iadmin_units(id) on delete set null;
 
 create index if not exists iadmin_expenses_unit_idx
-  on public.iadmin_expenses (unit_id)
+  on countrify.iadmin_expenses (unit_id)
   where unit_id is not null;
 
 -- 2. monto particular por item de liquidación (no prorrateado).
-alter table public.iadmin_liquidation_items
+alter table countrify.iadmin_liquidation_items
   add column if not exists particular_amount numeric(14,2) not null default 0
   check (particular_amount >= 0);
 
 -- 3. nuevo tipo de asiento en el ledger. ADD VALUE IF NOT EXISTS es seguro
 --    mientras no se use el valor en esta misma migración (PG 12+).
-alter type public.iadmin_ledger_entry_type add value if not exists 'cargo_particular';
+alter type countrify.iadmin_ledger_entry_type add value if not exists 'cargo_particular';

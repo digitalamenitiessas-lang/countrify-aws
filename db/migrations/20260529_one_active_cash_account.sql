@@ -11,14 +11,14 @@ with ranked as (
            partition by managed_property_id
            order by created_at desc, id desc
          ) as rk
-    from public.iadmin_cash_accounts
+    from countrify.iadmin_cash_accounts
    where is_active = true
 )
-update public.iadmin_cash_accounts ca
+update countrify.iadmin_cash_accounts ca
    set is_active = false
   from ranked r
  where ca.id = r.id and r.rk > 1;
 
 create unique index if not exists iadmin_cash_accounts_one_active_per_property
-  on public.iadmin_cash_accounts (managed_property_id)
+  on countrify.iadmin_cash_accounts (managed_property_id)
   where is_active = true;
