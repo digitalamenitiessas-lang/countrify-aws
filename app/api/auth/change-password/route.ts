@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Re-leemos el profile completo para tener passwordMustChange actualizado.
-  // Negocios viven en public.profiles, todos los demas en countrify.profiles.
+  // Negocios viven en countrify.profiles, todos los demas en countrify.profiles.
   const isBusiness = profile.role === 'negocio_admin'
   const fullProfile = isBusiness
     ? await findBusinessProfileById(profile.id)

@@ -50,12 +50,12 @@ export async function listAnnouncementsByAdminFromPostgres(input: {
         a.created_at::text as created_at,
         a.updated_at::text as updated_at,
         (select count(*)::int
-           from public.building_announcement_reads r
+           from countrify.building_announcement_reads r
           where r.announcement_id = a.id) as read_count
-      from public.building_announcements a
-      join public.buildings b on b.id = a.building_id
-      join public.iadmin_managed_properties mp on mp.building_id = b.id
-      left join public.profiles ap on ap.id = a.author_profile_id
+      from countrify.building_announcements a
+      join countrify.buildings b on b.id = a.building_id
+      join countrify.iadmin_managed_properties mp on mp.building_id = b.id
+      left join countrify.profiles ap on ap.id = a.author_profile_id
       where mp.administration_id = $1
         and ($2::uuid is null or a.building_id = $2)
       order by a.pinned desc, a.published_at desc
@@ -89,10 +89,10 @@ export async function listAnnouncementsForRecipientFromPostgres(input: {
         a.created_at::text as created_at,
         a.updated_at::text as updated_at,
         (r.read_at is not null) as is_read
-      from public.building_announcements a
-      join public.buildings b on b.id = a.building_id
-      left join public.profiles ap on ap.id = a.author_profile_id
-      left join public.building_announcement_reads r
+      from countrify.building_announcements a
+      join countrify.buildings b on b.id = a.building_id
+      left join countrify.profiles ap on ap.id = a.author_profile_id
+      left join countrify.building_announcement_reads r
         on r.announcement_id = a.id and r.profile_id = $1
       where a.building_id = $2
         and (a.expires_at is null or a.expires_at > now())
@@ -112,8 +112,8 @@ export async function countUnreadAnnouncementsForRecipientFromPostgres(input: {
   const result = await pgQuery<{ c: number }>(
     `
       select count(*)::int as c
-        from public.building_announcements a
-        left join public.building_announcement_reads r
+        from countrify.building_announcements a
+        left join countrify.building_announcement_reads r
           on r.announcement_id = a.id and r.profile_id = $1
        where a.building_id = $2
          and (a.expires_at is null or a.expires_at > now())
@@ -144,9 +144,9 @@ export async function getAnnouncementForEmailFromPostgres(
         a.published_at::text as published_at,
         a.created_at::text as created_at,
         a.updated_at::text as updated_at
-      from public.building_announcements a
-      join public.buildings b on b.id = a.building_id
-      left join public.profiles ap on ap.id = a.author_profile_id
+      from countrify.building_announcements a
+      join countrify.buildings b on b.id = a.building_id
+      left join countrify.profiles ap on ap.id = a.author_profile_id
       where a.id = $1
       limit 1
     `,
@@ -171,8 +171,8 @@ export async function listAnnouncementRecipientsFromPostgres(input: {
   const result = await pgQuery<AnnouncementRecipientRow>(
     `
       select distinct p.id as profile_id, p.email, p.full_name, p.role::text as role
-        from public.profiles p
-        left join public.unit_profile_memberships m on m.profile_id = p.id and m.building_id = $1
+        from countrify.profiles p
+        left join countrify.unit_profile_memberships m on m.profile_id = p.id and m.building_id = $1
        where (p.building_id = $1 or m.building_id = $1)
          and p.role = 'vecino'
          and p.email_blocked = false
@@ -196,7 +196,7 @@ export async function insertAnnouncementInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.building_announcements (
+      insert into countrify.building_announcements (
         building_id, author_profile_id, title, body, pinned, expires_at
       ) values ($1, $2, $3, $4, $5, $6::timestamptz)
       returning id
@@ -222,7 +222,7 @@ export async function updateAnnouncementInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      update public.building_announcements
+      update countrify.building_announcements
         set title = $2,
             body = $3,
             pinned = $4,
@@ -234,7 +234,7 @@ export async function updateAnnouncementInPostgres(input: {
 }
 
 export async function deleteAnnouncementInPostgres(id: string): Promise<void> {
-  await pgQuery(`delete from public.building_announcements where id = $1`, [id])
+  await pgQuery(`delete from countrify.building_announcements where id = $1`, [id])
 }
 
 export async function getAnnouncementAdminContextFromPostgres(
@@ -243,8 +243,8 @@ export async function getAnnouncementAdminContextFromPostgres(
   const result = await pgQuery<{ administration_id: string; building_id: string }>(
     `
       select mp.administration_id, a.building_id
-        from public.building_announcements a
-        join public.iadmin_managed_properties mp on mp.building_id = a.building_id
+        from countrify.building_announcements a
+        join countrify.iadmin_managed_properties mp on mp.building_id = a.building_id
        where a.id = $1
        limit 1
     `,
@@ -259,7 +259,7 @@ export async function markAnnouncementReadInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      insert into public.building_announcement_reads (announcement_id, profile_id)
+      insert into countrify.building_announcement_reads (announcement_id, profile_id)
       values ($1, $2)
       on conflict (announcement_id, profile_id) do nothing
     `,

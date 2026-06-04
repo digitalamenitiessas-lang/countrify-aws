@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
   // Buscamos el token: tiene que existir, no estar usado, y no estar expirado.
   const tokenRes = await pgQuery<{ id: string; profile_id: string }>(
     `select id, profile_id
-       from public.password_reset_tokens
+       from countrify.password_reset_tokens
       where token_hash = $1
         and used_at is null
         and expires_at > now()
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Reconstruimos el profile desde countrify.profiles o public.profiles
+  // Reconstruimos el profile desde countrify.profiles o countrify.profiles
   // (no podemos JOIN-ear directo porque el FK puede apuntar a cualquiera).
   const primaryRes = await pgQuery<{ email: string }>(
     `select email from countrify.profiles where id = $1 limit 1`,
@@ -71,7 +71,7 @@ export async function POST(request: NextRequest) {
   const businessRes = primaryRes.rows[0]
     ? { rows: [] as Array<{ email: string }> }
     : await pgQuery<{ email: string }>(
-        `select email from public.profiles where id = $1 limit 1`,
+        `select email from countrify.profiles where id = $1 limit 1`,
         [tokenRow.profile_id],
       )
 
@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
   }
 
   await pgQuery(
-    `update public.password_reset_tokens set used_at = now() where id = $1`,
+    `update countrify.password_reset_tokens set used_at = now() where id = $1`,
     [tokenRow.id],
   )
   await clearPasswordMustChange(tokenRow.profile_id)
@@ -110,7 +110,7 @@ export async function GET(request: NextRequest) {
   const tokenHash = hashToken(token)
   const res = await pgQuery<{ profile_id: string }>(
     `select profile_id
-       from public.password_reset_tokens
+       from countrify.password_reset_tokens
       where token_hash = $1
         and used_at is null
         and expires_at > now()
@@ -124,7 +124,7 @@ export async function GET(request: NextRequest) {
   const nameRes = await pgQuery<{ full_name: string }>(
     `select full_name from countrify.profiles where id = $1
      union all
-     select full_name from public.profiles where id = $1
+     select full_name from countrify.profiles where id = $1
      limit 1`,
     [row.profile_id],
   )

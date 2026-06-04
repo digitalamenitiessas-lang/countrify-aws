@@ -8,7 +8,7 @@ export async function getManagedPropertyAdminIdFromPostgres(
   propertyId: string,
 ): Promise<{ id: string; administration_id: string } | null> {
   const result = await pgQuery<{ id: string; administration_id: string }>(
-    `select id, administration_id from public.iadmin_managed_properties where id = $1 limit 1`,
+    `select id, administration_id from countrify.iadmin_managed_properties where id = $1 limit 1`,
     [propertyId],
   )
   return result.rows[0] ?? null
@@ -29,8 +29,8 @@ export async function getManagedPropertyContextFromPostgres(propertyId: string):
         mp.display_name,
         b.name as building_name,
         b.address as building_address
-      from public.iadmin_managed_properties mp
-      inner join public.buildings b on b.id = mp.building_id
+      from countrify.iadmin_managed_properties mp
+      inner join countrify.buildings b on b.id = mp.building_id
       where mp.id = $1
       limit 1
     `,
@@ -43,7 +43,7 @@ export async function getCashAccountFromPostgres(
   accountId: string,
 ): Promise<{ id: string; managed_property_id: string; name: string } | null> {
   const result = await pgQuery<{ id: string; managed_property_id: string; name: string }>(
-    `select id, managed_property_id, name from public.iadmin_cash_accounts where id = $1 limit 1`,
+    `select id, managed_property_id, name from countrify.iadmin_cash_accounts where id = $1 limit 1`,
     [accountId],
   )
   return result.rows[0] ?? null
@@ -77,8 +77,8 @@ export async function getLiquidationItemRunFromPostgres(itemId: string): Promise
         r.administration_id,
         r.managed_property_id,
         r.status::text as run_status
-      from public.iadmin_liquidation_items i
-      inner join public.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
+      from countrify.iadmin_liquidation_items i
+      inner join countrify.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
       where i.id = $1
       limit 1
     `,
@@ -89,7 +89,7 @@ export async function getLiquidationItemRunFromPostgres(itemId: string): Promise
 
 export async function revokeLiveShareTokensInPostgres(itemId: string): Promise<void> {
   await pgQuery(
-    `update public.iadmin_item_share_tokens set revoked_at = now() where liquidation_item_id = $1 and revoked_at is null`,
+    `update countrify.iadmin_item_share_tokens set revoked_at = now() where liquidation_item_id = $1 and revoked_at is null`,
     [itemId],
   )
 }
@@ -102,7 +102,7 @@ export async function insertShareTokenInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      insert into public.iadmin_item_share_tokens (liquidation_item_id, token, expires_at, created_by)
+      insert into countrify.iadmin_item_share_tokens (liquidation_item_id, token, expires_at, created_by)
       values ($1, $2, $3::timestamptz, $4)
     `,
     [input.liquidationItemId, input.token, input.expiresAt, input.createdBy],
@@ -119,14 +119,14 @@ export async function ensureAccountingPeriodInPostgres(input: {
   periodMonth: number
 }): Promise<{ id: string }> {
   const existing = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_accounting_periods where managed_property_id = $1 and period_year = $2 and period_month = $3 limit 1`,
+    `select id from countrify.iadmin_accounting_periods where managed_property_id = $1 and period_year = $2 and period_month = $3 limit 1`,
     [input.managedPropertyId, input.periodYear, input.periodMonth],
   )
   if (existing.rows[0]) return existing.rows[0]
 
   const created = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_accounting_periods (managed_property_id, period_year, period_month, status)
+      insert into countrify.iadmin_accounting_periods (managed_property_id, period_year, period_month, status)
       values ($1, $2, $3, 'open')
       returning id
     `,
@@ -157,7 +157,7 @@ export async function listRecurringProvidersFromPostgres(administrationId: strin
   }>(
     `
       select id, name, recurring_amount::text as recurring_amount, recurring_kind::text as recurring_kind, default_category
-      from public.iadmin_providers
+      from countrify.iadmin_providers
       where administration_id = $1 and is_recurring = true and is_active = true
     `,
     [administrationId],
@@ -174,7 +174,7 @@ export async function listExpenseProviderIdsForPeriodInPostgres(input: {
   const result = await pgQuery<{ provider_id: string | null }>(
     `
       select provider_id
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1 and accounting_period_id = $2 and provider_id = any($3::uuid[])
     `,
     [input.managedPropertyId, input.periodId, input.providerIds],
@@ -191,7 +191,7 @@ export async function listRecentProviderExpensesInPostgres(input: {
   const result = await pgQuery<{ provider_id: string | null; amount: string; issued_at: string | null }>(
     `
       select provider_id, amount::text as amount, issued_at::text as issued_at
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1
         and provider_id = any($2::uuid[])
         and issued_at >= $3::date
@@ -218,7 +218,7 @@ export async function insertRecurringExpenseInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_expenses (
+      insert into countrify.iadmin_expenses (
         administration_id, managed_property_id, accounting_period_id, provider_id,
         category, description, amount, currency, issued_at, status, expense_kind,
         created_by, approved_by, approved_at
@@ -266,7 +266,7 @@ export async function insertCashAccountInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_cash_accounts (
+      insert into countrify.iadmin_cash_accounts (
         managed_property_id, name, kind, bank_name, account_number, cbu, alias,
         opening_balance, opening_balance_at, notes, is_active
       )
@@ -324,7 +324,7 @@ export async function updateCashAccountInPostgres(
   if (cols.length === 0) return
   values.push(accountId)
   await pgQuery(
-    `update public.iadmin_cash_accounts set ${cols.join(', ')} where id = $${values.length}`,
+    `update countrify.iadmin_cash_accounts set ${cols.join(', ')} where id = $${values.length}`,
     values,
   )
 }
@@ -339,7 +339,7 @@ export async function deactivateOtherCashAccountsInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_cash_accounts
+      update countrify.iadmin_cash_accounts
       set is_active = false
       where managed_property_id = $1 and id <> $2 and is_active = true
     `,
@@ -359,8 +359,8 @@ export async function getCashAccountWithAdminFromPostgres(accountId: string): Pr
   }>(
     `
       select ca.id, ca.managed_property_id, mp.administration_id
-      from public.iadmin_cash_accounts ca
-      inner join public.iadmin_managed_properties mp on mp.id = ca.managed_property_id
+      from countrify.iadmin_cash_accounts ca
+      inner join countrify.iadmin_managed_properties mp on mp.id = ca.managed_property_id
       where ca.id = $1
       limit 1
     `,
@@ -391,7 +391,7 @@ export async function getExpenseForPaymentFromPostgres(expenseId: string): Promi
   }>(
     `
       select id, administration_id, managed_property_id, amount::text as amount, description, status::text as status
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where id = $1
       limit 1
     `,
@@ -402,7 +402,7 @@ export async function getExpenseForPaymentFromPostgres(expenseId: string): Promi
 
 export async function existingExpensePaymentMovementInPostgres(expenseId: string): Promise<boolean> {
   const result = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_bank_movements where expense_id = $1 and movement_kind = 'expense_payment' limit 1`,
+    `select id from countrify.iadmin_bank_movements where expense_id = $1 and movement_kind = 'expense_payment' limit 1`,
     [expenseId],
   )
   return result.rows.length > 0
@@ -417,7 +417,7 @@ export async function findProviderByNameInPostgres(input: {
   name: string
 }): Promise<{ id: string } | null> {
   const result = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_providers where administration_id = $1 and lower(name) = lower($2) limit 1`,
+    `select id from countrify.iadmin_providers where administration_id = $1 and lower(name) = lower($2) limit 1`,
     [input.administrationId, input.name],
   )
   return result.rows[0] ?? null
@@ -430,7 +430,7 @@ export async function insertProviderQuickFromPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_providers (administration_id, name, category, default_category, is_active)
+      insert into countrify.iadmin_providers (administration_id, name, category, default_category, is_active)
       values ($1, $2, $3, $4, true)
       returning id
     `,
@@ -444,7 +444,7 @@ export async function setProviderDefaultCategoryIfNullInPostgres(input: {
   category: string
 }): Promise<void> {
   await pgQuery(
-    `update public.iadmin_providers set default_category = $1 where id = $2 and default_category is null`,
+    `update countrify.iadmin_providers set default_category = $1 where id = $2 and default_category is null`,
     [input.category, input.providerId],
   )
 }
@@ -473,7 +473,7 @@ export async function insertExpenseInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_expenses (
+      insert into countrify.iadmin_expenses (
         administration_id, managed_property_id, accounting_period_id, provider_id,
         category, description, amount, currency, issued_at, due_at,
         status, expense_kind, unit_id, document_type, document_number,
@@ -516,7 +516,7 @@ export async function getExpenseStatusInfoFromPostgres(expenseId: string): Promi
   administration_id: string
 } | null> {
   const result = await pgQuery<{ id: string; status: string; administration_id: string }>(
-    `select id, status::text as status, administration_id from public.iadmin_expenses where id = $1 limit 1`,
+    `select id, status::text as status, administration_id from countrify.iadmin_expenses where id = $1 limit 1`,
     [expenseId],
   )
   return result.rows[0] ?? null
@@ -530,17 +530,17 @@ export async function changeExpenseStatusInPostgres(input: {
 }): Promise<void> {
   if (input.nextStatus === 'approved') {
     await pgQuery(
-      `update public.iadmin_expenses set status = $1::iadmin_expense_status, approved_by = $2, approved_at = now() where id = $3`,
+      `update countrify.iadmin_expenses set status = $1::iadmin_expense_status, approved_by = $2, approved_at = now() where id = $3`,
       [input.nextStatus, input.approvedBy, input.expenseId],
     )
   } else if (input.nextStatus === 'rejected' && input.rejectedReason) {
     await pgQuery(
-      `update public.iadmin_expenses set status = $1::iadmin_expense_status, rejected_reason = $2 where id = $3`,
+      `update countrify.iadmin_expenses set status = $1::iadmin_expense_status, rejected_reason = $2 where id = $3`,
       [input.nextStatus, input.rejectedReason, input.expenseId],
     )
   } else {
     await pgQuery(
-      `update public.iadmin_expenses set status = $1::iadmin_expense_status where id = $2`,
+      `update countrify.iadmin_expenses set status = $1::iadmin_expense_status where id = $2`,
       [input.nextStatus, input.expenseId],
     )
   }
@@ -588,14 +588,14 @@ export async function getExpenseEditContextFromPostgres(expenseId: string): Prom
             p.period_month,
             (
               select r.status::text
-                from public.iadmin_liquidation_runs r
+                from countrify.iadmin_liquidation_runs r
                where r.managed_property_id = e.managed_property_id
                  and r.accounting_period_id = e.accounting_period_id
                  and r.status in ('issued', 'closed')
                limit 1
             ) as blocking_run_status
-       from public.iadmin_expenses e
-       left join public.iadmin_accounting_periods p on p.id = e.accounting_period_id
+       from countrify.iadmin_expenses e
+       left join countrify.iadmin_accounting_periods p on p.id = e.accounting_period_id
       where e.id = $1
       limit 1`,
     [expenseId],
@@ -612,7 +612,7 @@ export async function updateExpenseInPostgres(input: {
   expenseKind: string
 }): Promise<void> {
   await pgQuery(
-    `update public.iadmin_expenses
+    `update countrify.iadmin_expenses
         set description = $2,
             amount = $3,
             category = $4,
@@ -662,7 +662,7 @@ export async function listExpensesForPeriodFromPostgres(input: {
   }
   const result = await pgQuery<PrevExpenseRow>(
     `select provider_id, category, description, amount, currency, expense_kind::text as expense_kind
-       from public.iadmin_expenses
+       from countrify.iadmin_expenses
       where managed_property_id = $1
         and accounting_period_id = $2
         and unit_id is null
@@ -688,7 +688,7 @@ export async function deleteExpensesForPeriodFromPostgres(input: {
   accountingPeriodId: string
 }): Promise<number> {
   const result = await pgQuery(
-    `delete from public.iadmin_expenses
+    `delete from countrify.iadmin_expenses
       where managed_property_id = $1
         and accounting_period_id = $2`,
     [input.managedPropertyId, input.accountingPeriodId],
@@ -706,7 +706,7 @@ export async function insertExpenseDocumentInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_expense_documents (expense_id, storage_path, file_name, mime_type, size_bytes, uploaded_by)
+      insert into countrify.iadmin_expense_documents (expense_id, storage_path, file_name, mime_type, size_bytes, uploaded_by)
       values ($1, $2, $3, $4, $5, $6)
       returning id
     `,
@@ -726,7 +726,7 @@ export async function insertAIExtractionInPostgres(input: {
   if (input.validatedBy) {
     await pgQuery(
       `
-        insert into public.iadmin_ai_document_extractions (document_id, status, provider, suggested_fields, confidence, validated_by, validated_at)
+        insert into countrify.iadmin_ai_document_extractions (document_id, status, provider, suggested_fields, confidence, validated_by, validated_at)
         values ($1, $2::iadmin_extraction_status, $3, $4::jsonb, $5, $6, now())
       `,
       [input.documentId, input.status, input.provider, JSON.stringify(input.suggestedFields), input.confidence, input.validatedBy],
@@ -734,7 +734,7 @@ export async function insertAIExtractionInPostgres(input: {
   } else {
     await pgQuery(
       `
-        insert into public.iadmin_ai_document_extractions (document_id, status, provider, suggested_fields, confidence)
+        insert into countrify.iadmin_ai_document_extractions (document_id, status, provider, suggested_fields, confidence)
         values ($1, $2::iadmin_extraction_status, $3, $4::jsonb, $5)
       `,
       [input.documentId, input.status, input.provider, JSON.stringify(input.suggestedFields), input.confidence],
@@ -758,8 +758,8 @@ export async function getExpenseDocumentWithAdminFromPostgres(documentId: string
   }>(
     `
       select d.id, d.storage_path, d.file_name, d.expense_id, e.administration_id
-      from public.iadmin_expense_documents d
-      inner join public.iadmin_expenses e on e.id = d.expense_id
+      from countrify.iadmin_expense_documents d
+      inner join countrify.iadmin_expenses e on e.id = d.expense_id
       where d.id = $1
       limit 1
     `,
@@ -782,9 +782,9 @@ export async function getAIExtractionWithAdminFromPostgres(extractionId: string)
   }>(
     `
       select x.id, x.document_id, d.expense_id, e.administration_id
-      from public.iadmin_ai_document_extractions x
-      inner join public.iadmin_expense_documents d on d.id = x.document_id
-      inner join public.iadmin_expenses e on e.id = d.expense_id
+      from countrify.iadmin_ai_document_extractions x
+      inner join countrify.iadmin_expense_documents d on d.id = x.document_id
+      inner join countrify.iadmin_expenses e on e.id = d.expense_id
       where x.id = $1
       limit 1
     `,
@@ -801,7 +801,7 @@ export async function updateAIExtractionDecisionInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_ai_document_extractions
+      update countrify.iadmin_ai_document_extractions
       set status = $1::iadmin_extraction_status,
           validated_by = $2,
           validated_at = now(),
@@ -844,7 +844,7 @@ export async function updateManagedPropertyInPostgres(
   if (cols.length === 0) return
   values.push(propertyId)
   await pgQuery(
-    `update public.iadmin_managed_properties set ${cols.join(', ')} where id = $${values.length}`,
+    `update countrify.iadmin_managed_properties set ${cols.join(', ')} where id = $${values.length}`,
     values,
   )
 }
@@ -854,14 +854,14 @@ export async function updatePropertyLegalInfoInPostgres(input: {
   legalInfo: Record<string, unknown>
 }): Promise<void> {
   await pgQuery(
-    `update public.iadmin_managed_properties set legal_info = $1::jsonb where id = $2`,
+    `update countrify.iadmin_managed_properties set legal_info = $1::jsonb where id = $2`,
     [JSON.stringify(input.legalInfo), input.propertyId],
   )
 }
 
 export async function getBuildingIdForPropertyFromPostgres(propertyId: string): Promise<string | null> {
   const result = await pgQuery<{ building_id: string }>(
-    `select building_id from public.iadmin_managed_properties where id = $1 limit 1`,
+    `select building_id from countrify.iadmin_managed_properties where id = $1 limit 1`,
     [propertyId],
   )
   return result.rows[0]?.building_id ?? null
@@ -877,7 +877,7 @@ export async function insertUnitFromCrudInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_units (
+      insert into countrify.iadmin_units (
         managed_property_id, code, kind, floor, surface_m2, prorata_coefficient, is_active
       )
       values ($1, $2, $3::iadmin_unit_kind, $4, $5, $6, true)
@@ -916,7 +916,7 @@ export async function updateUnitInPostgres(
   if (cols.length === 0) return
   values.push(unitId)
   await pgQuery(
-    `update public.iadmin_units set ${cols.join(', ')} where id = $${values.length}`,
+    `update countrify.iadmin_units set ${cols.join(', ')} where id = $${values.length}`,
     values,
   )
 }
@@ -937,8 +937,8 @@ export async function getUnitWithAdminFromPostgres(unitId: string): Promise<{
   }>(
     `
       select u.id, u.managed_property_id, mp.administration_id, mp.building_id, u.code
-      from public.iadmin_units u
-      inner join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+      from countrify.iadmin_units u
+      inner join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       where u.id = $1
       limit 1
     `,
@@ -948,7 +948,7 @@ export async function getUnitWithAdminFromPostgres(unitId: string): Promise<{
 }
 
 export async function deactivateUnitInPostgres(unitId: string): Promise<void> {
-  await pgQuery(`update public.iadmin_units set is_active = false where id = $1`, [unitId])
+  await pgQuery(`update countrify.iadmin_units set is_active = false where id = $1`, [unitId])
 }
 
 export async function insertUnitHolderFromCrudInPostgres(input: {
@@ -962,7 +962,7 @@ export async function insertUnitHolderFromCrudInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_unit_holders (
+      insert into countrify.iadmin_unit_holders (
         unit_id, full_name, holder_kind, tax_id, email, phone, start_date, is_active
       )
       values ($1, $2, $3::iadmin_holder_kind, $4, $5, $6, $7::date, true)
@@ -995,9 +995,9 @@ export async function getHolderWithAdminFromPostgres(holderId: string): Promise<
   }>(
     `
       select h.id, h.unit_id, u.managed_property_id, mp.administration_id
-      from public.iadmin_unit_holders h
-      inner join public.iadmin_units u on u.id = h.unit_id
-      inner join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+      from countrify.iadmin_unit_holders h
+      inner join countrify.iadmin_units u on u.id = h.unit_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       where h.id = $1
       limit 1
     `,
@@ -1014,7 +1014,7 @@ export async function setUnitHolderProfileIdInPostgres(input: {
   profileId: string
 }): Promise<void> {
   await pgQuery(
-    `update public.iadmin_unit_holders set profile_id = $2, updated_at = now() where id = $1`,
+    `update countrify.iadmin_unit_holders set profile_id = $2, updated_at = now() where id = $1`,
     [input.holderId, input.profileId],
   )
 }
@@ -1043,7 +1043,7 @@ export async function findActiveUnitHolderByEmailInPostgres(input: {
   }>(
     `
       select id, profile_id, full_name, email, phone, holder_kind
-      from public.iadmin_unit_holders
+      from countrify.iadmin_unit_holders
       where unit_id = $1
         and is_active = true
         and email is not null
@@ -1089,9 +1089,9 @@ export async function getHolderForAccessFromPostgres(holderId: string): Promise<
       select h.id, h.unit_id, u.code as unit_code, u.managed_property_id,
              mp.administration_id, mp.building_id,
              h.profile_id, h.full_name, h.email, h.phone, h.holder_kind, h.is_active
-      from public.iadmin_unit_holders h
-      inner join public.iadmin_units u on u.id = h.unit_id
-      inner join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+      from countrify.iadmin_unit_holders h
+      inner join countrify.iadmin_units u on u.id = h.unit_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       where h.id = $1
       limit 1
     `,
@@ -1105,7 +1105,7 @@ export async function endHolderInPostgres(input: {
   endDate: string
 }): Promise<void> {
   await pgQuery(
-    `update public.iadmin_unit_holders set is_active = false, end_date = $1::date where id = $2`,
+    `update countrify.iadmin_unit_holders set is_active = false, end_date = $1::date where id = $2`,
     [input.endDate, input.holderId],
   )
 }
@@ -1133,7 +1133,7 @@ export async function findPrincipalMembershipForProfileFromPostgres(input: {
   profileId: string
 }): Promise<{ id: string; building_id: string } | null> {
   const result = await pgQuery<{ id: string; building_id: string }>(
-    `select id, building_id from public.unit_profile_memberships where unit_id = $1 and profile_id = $2 and relationship_type = 'vecino_principal' and active = true limit 1`,
+    `select id, building_id from countrify.unit_profile_memberships where unit_id = $1 and profile_id = $2 and relationship_type = 'vecino_principal' and active = true limit 1`,
     [input.unitId, input.profileId],
   )
   return result.rows[0] ?? null
@@ -1157,7 +1157,7 @@ export async function findActiveMembershipsForProfileFromPostgres(profileId: str
   }>(
     `
       select id, unit_id, building_id, relationship_type::text as relationship_type, active
-      from public.unit_profile_memberships
+      from countrify.unit_profile_memberships
       where profile_id = $1 and active = true
       order by created_at asc
     `,
@@ -1168,7 +1168,7 @@ export async function findActiveMembershipsForProfileFromPostgres(profileId: str
 
 export async function countActiveAdditionalNeighborsInPostgres(unitId: string): Promise<number> {
   const result = await pgQuery<{ c: number }>(
-    `select count(*)::int as c from public.unit_profile_memberships where unit_id = $1 and relationship_type = 'vecino_adicional' and active = true`,
+    `select count(*)::int as c from countrify.unit_profile_memberships where unit_id = $1 and relationship_type = 'vecino_adicional' and active = true`,
     [unitId],
   )
   return result.rows[0]?.c ?? 0
@@ -1176,7 +1176,7 @@ export async function countActiveAdditionalNeighborsInPostgres(unitId: string): 
 
 export async function deactivateActivePrincipalMembershipsInPostgres(unitId: string): Promise<void> {
   await pgQuery(
-    `update public.unit_profile_memberships set active = false where unit_id = $1 and relationship_type = 'vecino_principal' and active = true`,
+    `update countrify.unit_profile_memberships set active = false where unit_id = $1 and relationship_type = 'vecino_principal' and active = true`,
     [unitId],
   )
 }
@@ -1187,7 +1187,7 @@ export async function findUnitProfileMembershipFromPostgres(input: {
   relationshipType: string
 }): Promise<{ id: string; building_id: string; active: boolean } | null> {
   const result = await pgQuery<{ id: string; building_id: string; active: boolean }>(
-    `select id, building_id, active from public.unit_profile_memberships where unit_id = $1 and profile_id = $2 and relationship_type = $3 limit 1`,
+    `select id, building_id, active from countrify.unit_profile_memberships where unit_id = $1 and profile_id = $2 and relationship_type = $3 limit 1`,
     [input.unitId, input.profileId, input.relationshipType],
   )
   return result.rows[0] ?? null
@@ -1205,7 +1205,7 @@ export async function upsertUnitProfileMembershipInPostgres(input: {
   if (input.membershipId) {
     await pgQuery(
       `
-        update public.unit_profile_memberships
+        update countrify.unit_profile_memberships
         set unit_id = $1,
             building_id = $2,
             profile_id = $3,
@@ -1229,7 +1229,7 @@ export async function upsertUnitProfileMembershipInPostgres(input: {
   }
   await pgQuery(
     `
-      insert into public.unit_profile_memberships (
+      insert into countrify.unit_profile_memberships (
         unit_id, building_id, profile_id, relationship_type, is_primary, active, created_by_profile_id
       )
       values ($1, $2, $3, $4, $5, true, $6)
@@ -1250,7 +1250,7 @@ export async function findOwnerHolderForProfileFromPostgres(input: {
   profileId: string
 }): Promise<{ id: string } | null> {
   const result = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_unit_holders where unit_id = $1 and profile_id = $2 and holder_kind = 'propietario' limit 1`,
+    `select id from countrify.iadmin_unit_holders where unit_id = $1 and profile_id = $2 and holder_kind = 'propietario' limit 1`,
     [input.unitId, input.profileId],
   )
   return result.rows[0] ?? null
@@ -1265,7 +1265,7 @@ export async function insertOwnerHolderInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      insert into public.iadmin_unit_holders (
+      insert into countrify.iadmin_unit_holders (
         unit_id, profile_id, full_name, holder_kind, email, phone, is_active
       )
       values ($1, $2, $3, 'propietario'::iadmin_holder_kind, $4, $5, true)
@@ -1288,9 +1288,9 @@ export async function getMembershipWithAdminFromPostgres(membershipId: string): 
   }>(
     `
       select m.id, m.unit_id, u.managed_property_id, mp.administration_id
-      from public.unit_profile_memberships m
-      inner join public.iadmin_units u on u.id = m.unit_id
-      inner join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+      from countrify.unit_profile_memberships m
+      inner join countrify.iadmin_units u on u.id = m.unit_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       where m.id = $1
       limit 1
     `,
@@ -1301,7 +1301,7 @@ export async function getMembershipWithAdminFromPostgres(membershipId: string): 
 
 export async function deactivateMembershipByIdInPostgres(membershipId: string): Promise<void> {
   await pgQuery(
-    `update public.unit_profile_memberships set active = false where id = $1`,
+    `update countrify.unit_profile_memberships set active = false where id = $1`,
     [membershipId],
   )
 }
@@ -1317,7 +1317,7 @@ export async function insertBuildingInformationInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      insert into public.building_information (
+      insert into countrify.building_information (
         building_id, title, category, content, visible_to, sort_order,
         created_by_profile_id, updated_by_profile_id, is_active
       )
@@ -1340,7 +1340,7 @@ export async function deactivateBuildingInformationInPostgres(input: {
   updatedByProfileId: string
 }): Promise<void> {
   await pgQuery(
-    `update public.building_information set is_active = false, updated_by_profile_id = $1 where id = $2`,
+    `update countrify.building_information set is_active = false, updated_by_profile_id = $1 where id = $2`,
     [input.updatedByProfileId, input.itemId],
   )
 }
@@ -1352,7 +1352,7 @@ export async function upsertAccountingPeriodOpenInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_accounting_periods (managed_property_id, period_year, period_month, status)
+      insert into countrify.iadmin_accounting_periods (managed_property_id, period_year, period_month, status)
       values ($1, $2, $3, 'open')
       on conflict (managed_property_id, period_year, period_month) do update set status = 'open'
       returning id
@@ -1374,8 +1374,8 @@ export async function getAccountingPeriodWithAdminFromPostgres(periodId: string)
   }>(
     `
       select ap.id, ap.managed_property_id, mp.administration_id
-      from public.iadmin_accounting_periods ap
-      inner join public.iadmin_managed_properties mp on mp.id = ap.managed_property_id
+      from countrify.iadmin_accounting_periods ap
+      inner join countrify.iadmin_managed_properties mp on mp.id = ap.managed_property_id
       where ap.id = $1
       limit 1
     `,
@@ -1391,12 +1391,12 @@ export async function changeAccountingPeriodStatusInPostgres(input: {
 }): Promise<void> {
   if (input.nextStatus === 'closed') {
     await pgQuery(
-      `update public.iadmin_accounting_periods set status = 'closed', closed_at = now(), closed_by = $1 where id = $2`,
+      `update countrify.iadmin_accounting_periods set status = 'closed', closed_at = now(), closed_by = $1 where id = $2`,
       [input.closedByProfileId, input.periodId],
     )
   } else {
     await pgQuery(
-      `update public.iadmin_accounting_periods set status = $1, closed_at = null, closed_by = null where id = $2`,
+      `update countrify.iadmin_accounting_periods set status = $1, closed_at = null, closed_by = null where id = $2`,
       [input.nextStatus, input.periodId],
     )
   }
@@ -1408,7 +1408,7 @@ export async function listProfileNamesByIdsFromPostgres(profileIds: string[]): P
   const out = new Map<string, string>()
   if (profileIds.length === 0) return out
   const result = await pgQuery<{ id: string; full_name: string | null; email: string | null }>(
-    `select id, full_name, email from public.profiles where id = any($1::uuid[])`,
+    `select id, full_name, email from countrify.profiles where id = any($1::uuid[])`,
     [profileIds],
   )
   for (const r of result.rows) {
@@ -1427,7 +1427,7 @@ export async function getAccountingPeriodIdAndStatusFromPostgres(input: {
   periodMonth: number
 }): Promise<{ id: string; status: string } | null> {
   const result = await pgQuery<{ id: string; status: string }>(
-    `select id, status::text as status from public.iadmin_accounting_periods where managed_property_id = $1 and period_year = $2 and period_month = $3 limit 1`,
+    `select id, status::text as status from countrify.iadmin_accounting_periods where managed_property_id = $1 and period_year = $2 and period_month = $3 limit 1`,
     [input.managedPropertyId, input.periodYear, input.periodMonth],
   )
   return result.rows[0] ?? null
@@ -1440,14 +1440,14 @@ export async function findExpenseInPeriodByProviderFromPostgres(input: {
 }): Promise<{ id: string; status: string } | null> {
   if (input.providerId === null) {
     const result = await pgQuery<{ id: string; status: string }>(
-      `select id, status::text as status from public.iadmin_expenses where managed_property_id = $1 and accounting_period_id = $2 and provider_id is null`,
+      `select id, status::text as status from countrify.iadmin_expenses where managed_property_id = $1 and accounting_period_id = $2 and provider_id is null`,
       [input.managedPropertyId, input.accountingPeriodId],
     )
     if (result.rows.length !== 1) return null
     return result.rows[0]
   }
   const result = await pgQuery<{ id: string; status: string }>(
-    `select id, status::text as status from public.iadmin_expenses where managed_property_id = $1 and accounting_period_id = $2 and provider_id = $3`,
+    `select id, status::text as status from countrify.iadmin_expenses where managed_property_id = $1 and accounting_period_id = $2 and provider_id = $3`,
     [input.managedPropertyId, input.accountingPeriodId, input.providerId],
   )
   if (result.rows.length !== 1) return null
@@ -1455,7 +1455,7 @@ export async function findExpenseInPeriodByProviderFromPostgres(input: {
 }
 
 export async function deleteExpenseFromPostgres(expenseId: string): Promise<void> {
-  await pgQuery(`delete from public.iadmin_expenses where id = $1`, [expenseId])
+  await pgQuery(`delete from countrify.iadmin_expenses where id = $1`, [expenseId])
 }
 
 export async function updateExpenseAmountInPostgres(input: {
@@ -1470,7 +1470,7 @@ export async function updateExpenseAmountInPostgres(input: {
   if (input.setApprovedTimestamp && input.approvedBy) {
     await pgQuery(
       `
-        update public.iadmin_expenses
+        update countrify.iadmin_expenses
         set amount = $1,
             description = $2,
             expense_kind = $3::iadmin_expense_kind,
@@ -1484,7 +1484,7 @@ export async function updateExpenseAmountInPostgres(input: {
   } else {
     await pgQuery(
       `
-        update public.iadmin_expenses
+        update countrify.iadmin_expenses
         set amount = $1,
             description = $2,
             expense_kind = $3::iadmin_expense_kind,
@@ -1501,7 +1501,7 @@ export async function getProviderNameAndDefaultDescFromPostgres(providerId: stri
   default_description: string | null
 } | null> {
   const result = await pgQuery<{ name: string; default_description: string | null }>(
-    `select name, default_description from public.iadmin_providers where id = $1 limit 1`,
+    `select name, default_description from countrify.iadmin_providers where id = $1 limit 1`,
     [providerId],
   )
   return result.rows[0] ?? null
@@ -1512,7 +1512,7 @@ export async function findProviderByNameWithRecurringFromPostgres(input: {
   name: string
 }): Promise<{ id: string; is_recurring: boolean } | null> {
   const result = await pgQuery<{ id: string; is_recurring: boolean }>(
-    `select id, is_recurring from public.iadmin_providers where administration_id = $1 and lower(name) = lower($2) limit 1`,
+    `select id, is_recurring from countrify.iadmin_providers where administration_id = $1 and lower(name) = lower($2) limit 1`,
     [input.administrationId, input.name],
   )
   return result.rows[0] ?? null
@@ -1524,7 +1524,7 @@ export async function setProviderRecurringInPostgres(input: {
   recurringKind: string
 }): Promise<void> {
   await pgQuery(
-    `update public.iadmin_providers set is_recurring = $1, recurring_kind = $2::iadmin_expense_kind where id = $3`,
+    `update countrify.iadmin_providers set is_recurring = $1, recurring_kind = $2::iadmin_expense_kind where id = $3`,
     [input.isRecurring, input.recurringKind, input.providerId],
   )
 }
@@ -1537,7 +1537,7 @@ export async function insertProviderRecurringFromPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_providers (
+      insert into countrify.iadmin_providers (
         administration_id, name, category, default_category, is_recurring, recurring_kind, is_active
       )
       values ($1, $2, $3, $4, true, $5::iadmin_expense_kind, true)
@@ -1575,9 +1575,9 @@ export async function getManagedPropertyForEmitFromPostgres(propertyId: string):
         b.name as building_name,
         a.name as admin_name,
         a.legal_info as admin_legal_info
-      from public.iadmin_managed_properties mp
-      inner join public.buildings b on b.id = mp.building_id
-      inner join public.iadmin_administrations a on a.id = mp.administration_id
+      from countrify.iadmin_managed_properties mp
+      inner join countrify.buildings b on b.id = mp.building_id
+      inner join countrify.iadmin_administrations a on a.id = mp.administration_id
       where mp.id = $1
       limit 1
     `,
@@ -1591,7 +1591,7 @@ export async function listImputedExpensesAmountsByPeriodFromPostgres(input: {
   accountingPeriodId: string
 }): Promise<Array<{ amount: string; expense_kind: string | null; unit_id: string | null }>> {
   const result = await pgQuery<{ amount: string; expense_kind: string | null; unit_id: string | null }>(
-    `select amount::text as amount, expense_kind::text as expense_kind, unit_id from public.iadmin_expenses where managed_property_id = $1 and accounting_period_id = $2 and status = 'imputed'`,
+    `select amount::text as amount, expense_kind::text as expense_kind, unit_id from countrify.iadmin_expenses where managed_property_id = $1 and accounting_period_id = $2 and status = 'imputed'`,
     [input.managedPropertyId, input.accountingPeriodId],
   )
   return result.rows
@@ -1619,7 +1619,7 @@ export async function listActiveUnitsWithHoldersForEmitFromPostgres(propertyId: 
       with chosen_holder as (
         select distinct on (unit_id)
           unit_id, full_name, phone, email, is_active
-        from public.iadmin_unit_holders
+        from countrify.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       )
       select
@@ -1629,7 +1629,7 @@ export async function listActiveUnitsWithHoldersForEmitFromPostgres(propertyId: 
         ch.full_name as holder_name,
         ch.phone as holder_phone,
         ch.email as holder_email
-      from public.iadmin_units u
+      from countrify.iadmin_units u
       left join chosen_holder ch on ch.unit_id = u.id
       where u.managed_property_id = $1 and u.is_active = true
       order by u.code
@@ -1658,7 +1658,7 @@ export async function listPriorRunItemsForEmitFromPostgres(input: {
   }>(
     `
       with prior_run as (
-        select id from public.iadmin_liquidation_runs
+        select id from countrify.iadmin_liquidation_runs
         where managed_property_id = $1
           and accounting_period_id <> $2
           and status in ('calculated', 'issued', 'closed')
@@ -1669,7 +1669,7 @@ export async function listPriorRunItemsForEmitFromPostgres(input: {
              i.ordinary_amount::text as ordinary_amount,
              i.extraordinary_amount::text as extraordinary_amount,
              i.previous_balance::text as previous_balance
-      from public.iadmin_liquidation_items i
+      from countrify.iadmin_liquidation_items i
       where i.liquidation_run_id in (select id from prior_run)
     `,
     [input.managedPropertyId, input.excludePeriodId],
@@ -1692,7 +1692,7 @@ export async function upsertIssuedLiquidationRunInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_liquidation_runs (
+      insert into countrify.iadmin_liquidation_runs (
         administration_id, managed_property_id, accounting_period_id, status,
         total_expenses, ordinary_total, extraordinary_total, previous_balance,
         due_dates, total_units, generated_by, generated_at,
@@ -1752,7 +1752,7 @@ export async function listLiquidationItemsByRunFromPostgres(runId: string): Prom
     extraordinary_amount: string | null
     previous_balance: string | null
   }>(
-    `select id, unit_id, ordinary_amount::text as ordinary_amount, extraordinary_amount::text as extraordinary_amount, previous_balance::text as previous_balance from public.iadmin_liquidation_items where liquidation_run_id = $1`,
+    `select id, unit_id, ordinary_amount::text as ordinary_amount, extraordinary_amount::text as extraordinary_amount, previous_balance::text as previous_balance from countrify.iadmin_liquidation_items where liquidation_run_id = $1`,
     [runId],
   )
   return result.rows
@@ -1761,7 +1761,7 @@ export async function listLiquidationItemsByRunFromPostgres(runId: string): Prom
 export async function bulkRevokeShareTokensInPostgres(itemIds: string[]): Promise<void> {
   if (itemIds.length === 0) return
   await pgQuery(
-    `update public.iadmin_item_share_tokens set revoked_at = now() where liquidation_item_id = any($1::uuid[]) and revoked_at is null`,
+    `update countrify.iadmin_item_share_tokens set revoked_at = now() where liquidation_item_id = any($1::uuid[]) and revoked_at is null`,
     [itemIds],
   )
 }
@@ -1778,7 +1778,7 @@ export async function bulkInsertShareTokensInPostgres(
     placeholders.push(`($${idx + 1}, $${idx + 2}, $${idx + 3}::timestamptz, $${idx + 4})`)
   }
   await pgQuery(
-    `insert into public.iadmin_item_share_tokens (liquidation_item_id, token, expires_at, created_by) values ${placeholders.join(', ')}`,
+    `insert into countrify.iadmin_item_share_tokens (liquidation_item_id, token, expires_at, created_by) values ${placeholders.join(', ')}`,
     values,
   )
 }
@@ -1788,7 +1788,7 @@ export async function listLiveShareTokensByItemsFromPostgres(itemIds: string[]):
 > {
   if (itemIds.length === 0) return []
   const result = await pgQuery<{ token: string; liquidation_item_id: string }>(
-    `select token, liquidation_item_id from public.iadmin_item_share_tokens where liquidation_item_id = any($1::uuid[]) and revoked_at is null`,
+    `select token, liquidation_item_id from countrify.iadmin_item_share_tokens where liquidation_item_id = any($1::uuid[]) and revoked_at is null`,
     [itemIds],
   )
   return result.rows
@@ -1799,7 +1799,7 @@ export async function getFirstActiveCashAccountFromPostgres(propertyId: string):
   name: string
 } | null> {
   const result = await pgQuery<{ id: string; name: string }>(
-    `select id, name from public.iadmin_cash_accounts where managed_property_id = $1 and is_active = true order by created_at limit 1`,
+    `select id, name from countrify.iadmin_cash_accounts where managed_property_id = $1 and is_active = true order by created_at limit 1`,
     [propertyId],
   )
   return result.rows[0] ?? null
@@ -1810,7 +1810,7 @@ export async function getLiquidationRunByPeriodFromPostgres(input: {
   accountingPeriodId: string
 }): Promise<{ id: string } | null> {
   const result = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_liquidation_runs where managed_property_id = $1 and accounting_period_id = $2 limit 1`,
+    `select id from countrify.iadmin_liquidation_runs where managed_property_id = $1 and accounting_period_id = $2 limit 1`,
     [input.managedPropertyId, input.accountingPeriodId],
   )
   return result.rows[0] ?? null
@@ -1821,7 +1821,7 @@ export async function getLiquidationItemByRunUnitFromPostgres(input: {
   unitId: string
 }): Promise<{ id: string } | null> {
   const result = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_liquidation_items where liquidation_run_id = $1 and unit_id = $2 limit 1`,
+    `select id from countrify.iadmin_liquidation_items where liquidation_run_id = $1 and unit_id = $2 limit 1`,
     [input.runId, input.unitId],
   )
   return result.rows[0] ?? null
@@ -1849,13 +1849,13 @@ export async function listUnpaidApprovedExpensesFromPostgres(
         e.description,
         e.amount::text as amount,
         p.name as provider_name
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
       where e.managed_property_id = $1
         and e.status in ('approved', 'imputed')
         and not exists (
           select 1
-          from public.iadmin_bank_movements m
+          from countrify.iadmin_bank_movements m
           where m.expense_id = e.id and m.movement_kind = 'expense_payment'
         )
     `,
@@ -1872,7 +1872,7 @@ export async function listUnitsByPropertyMinimalFromPostgres(
   propertyId: string,
 ): Promise<Array<{ id: string; code: string }>> {
   const result = await pgQuery<{ id: string; code: string }>(
-    `select id, code from public.iadmin_units where managed_property_id = $1`,
+    `select id, code from countrify.iadmin_units where managed_property_id = $1`,
     [propertyId],
   )
   return result.rows
@@ -1890,7 +1890,7 @@ export async function upsertUnitInPostgres(input: {
   if (input.id) {
     await pgQuery(
       `
-        update public.iadmin_units
+        update countrify.iadmin_units
         set kind = $1::iadmin_unit_kind,
             floor = $2,
             surface_m2 = $3,
@@ -1904,7 +1904,7 @@ export async function upsertUnitInPostgres(input: {
   }
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_units (
+      insert into countrify.iadmin_units (
         managed_property_id, code, kind, floor, surface_m2, prorata_coefficient, is_active
       )
       values ($1, $2, $3::iadmin_unit_kind, $4, $5, $6, true)
@@ -1928,7 +1928,7 @@ export async function closeActiveHoldersOfKindInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_unit_holders
+      update countrify.iadmin_unit_holders
       set is_active = false, end_date = current_date
       where unit_id = $1 and holder_kind = $2::iadmin_holder_kind and is_active = true
     `,
@@ -1948,7 +1948,7 @@ export async function insertUnitHolderInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_unit_holders (
+      insert into countrify.iadmin_unit_holders (
         unit_id, profile_id, full_name, holder_kind, tax_id, email, phone, start_date, is_active
       )
       values ($1, $2, $3, $4::iadmin_holder_kind, $5, $6, $7, $8::date, true)
@@ -1986,7 +1986,7 @@ export async function getLiquidationRunWithAdminFromPostgres(runId: string): Pro
     managed_property_id: string
     accounting_period_id: string
   }>(
-    `select id, status::text as status, administration_id, managed_property_id, accounting_period_id from public.iadmin_liquidation_runs where id = $1 limit 1`,
+    `select id, status::text as status, administration_id, managed_property_id, accounting_period_id from countrify.iadmin_liquidation_runs where id = $1 limit 1`,
     [runId],
   )
   return result.rows[0] ?? null
@@ -2006,7 +2006,7 @@ export async function getAccountingPeriodFromPostgres(periodId: string): Promise
     period_year: number
     period_month: number
   }>(
-    `select id, managed_property_id, status::text as status, period_year, period_month from public.iadmin_accounting_periods where id = $1 limit 1`,
+    `select id, managed_property_id, status::text as status, period_year, period_month from countrify.iadmin_accounting_periods where id = $1 limit 1`,
     [periodId],
   )
   return result.rows[0] ?? null
@@ -2017,7 +2017,7 @@ export async function getExistingLiquidationRunForPeriodFromPostgres(input: {
   accountingPeriodId: string
 }): Promise<{ id: string; status: string } | null> {
   const result = await pgQuery<{ id: string; status: string }>(
-    `select id, status::text as status from public.iadmin_liquidation_runs where managed_property_id = $1 and accounting_period_id = $2 limit 1`,
+    `select id, status::text as status from countrify.iadmin_liquidation_runs where managed_property_id = $1 and accounting_period_id = $2 limit 1`,
     [input.managedPropertyId, input.accountingPeriodId],
   )
   return result.rows[0] ?? null
@@ -2030,7 +2030,7 @@ export async function listImputedExpensesByPeriodFromPostgres(input: {
   const result = await pgQuery<{ id: string; amount: string; expense_kind: string | null; unit_id: string | null }>(
     `
       select id, amount::text as amount, expense_kind::text as expense_kind, unit_id
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1
         and accounting_period_id = $2
         and status = 'imputed'
@@ -2046,7 +2046,7 @@ export async function listActiveUnitsWithProrataFromPostgres(propertyId: string)
   const result = await pgQuery<{ id: string; code: string; prorata_coefficient: string | null }>(
     `
       select id, code, prorata_coefficient::text as prorata_coefficient
-      from public.iadmin_units
+      from countrify.iadmin_units
       where managed_property_id = $1 and is_active = true
       order by code
     `,
@@ -2063,7 +2063,7 @@ export async function getProrataSumForPropertyFromPostgres(propertyId: string): 
   const result = await pgQuery<{ total: string | null }>(
     `
       select coalesce(sum(prorata_coefficient), 0)::text as total
-      from public.iadmin_units
+      from countrify.iadmin_units
       where managed_property_id = $1 and is_active = true
     `,
     [propertyId],
@@ -2082,7 +2082,7 @@ export async function getRunPaymentStatsFromPostgres(runId: string): Promise<{
   const result = await pgQuery<{ count: string; total: string | null }>(
     `
       select count(*)::text as count, coalesce(sum(amount), 0)::text as total
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where liquidation_run_id = $1 and is_void = false
     `,
     [runId],
@@ -2115,7 +2115,7 @@ export async function sumLivePaymentsByItemIdsFromPostgres(
   const result = await pgQuery<{ liquidation_item_id: string; amount: string }>(
     `
       select liquidation_item_id, amount::text as amount
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where liquidation_item_id = any($1::uuid[]) and is_void = false
     `,
     [itemIds],
@@ -2139,7 +2139,7 @@ export async function getMostRecentPriorRunWithItemsFromPostgres(input: {
   const priorRun = await pgQuery<{ id: string }>(
     `
       select id
-      from public.iadmin_liquidation_runs
+      from countrify.iadmin_liquidation_runs
       where managed_property_id = $1
         and ($2::uuid is null or id <> $2)
         and status in ('calculated', 'issued', 'closed')
@@ -2161,7 +2161,7 @@ export async function getMostRecentPriorRunWithItemsFromPostgres(input: {
     `
       select id as item_id, unit_id, ordinary_amount::text as ordinary_amount,
              extraordinary_amount::text as extraordinary_amount, previous_balance::text as previous_balance
-      from public.iadmin_liquidation_items
+      from countrify.iadmin_liquidation_items
       where liquidation_run_id = $1
     `,
     [runId],
@@ -2183,7 +2183,7 @@ export async function upsertLiquidationRunInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_liquidation_runs (
+      insert into countrify.iadmin_liquidation_runs (
         administration_id, managed_property_id, accounting_period_id, status,
         total_expenses, ordinary_total, extraordinary_total, previous_balance,
         due_dates, total_units, generated_by, generated_at,
@@ -2236,7 +2236,7 @@ export async function deleteLiquidationItemsForRunInPostgres(runId: string): Pro
   // recibieron pagos parciales (el FIFO los salta porque status='paid').
   await pgQuery(
     `
-      update public.iadmin_unit_ledger_entries le
+      update countrify.iadmin_unit_ledger_entries le
       set
         balance_open = le.amount,
         status = 'open'::iadmin_ledger_entry_status,
@@ -2244,14 +2244,14 @@ export async function deleteLiquidationItemsForRunInPostgres(runId: string): Pro
           'released_at', now()::text,
           'released_from_run', $1::text
         )
-      from public.iadmin_liquidation_items li
+      from countrify.iadmin_liquidation_items li
       where li.liquidation_run_id = $1
         and le.superseded_by_item_id = li.id
         and le.entry_type = 'recargo_mora'
     `,
     [runId],
   )
-  await pgQuery(`delete from public.iadmin_liquidation_items where liquidation_run_id = $1`, [runId])
+  await pgQuery(`delete from countrify.iadmin_liquidation_items where liquidation_run_id = $1`, [runId])
 }
 
 export async function bulkInsertLiquidationItemsInPostgres(
@@ -2287,7 +2287,7 @@ export async function bulkInsertLiquidationItemsInPostgres(
   }
   await pgQuery(
     `
-      insert into public.iadmin_liquidation_items (
+      insert into countrify.iadmin_liquidation_items (
         liquidation_run_id, unit_id, prorata_coefficient, amount,
         ordinary_amount, extraordinary_amount, previous_balance, particular_amount
       )
@@ -2305,7 +2305,7 @@ export async function updateLiquidationRunStatusInPostgres(input: {
   if (input.nextStatus === 'issued') {
     await pgQuery(
       `
-        update public.iadmin_liquidation_runs
+        update countrify.iadmin_liquidation_runs
         set status = $1::iadmin_liquidation_status,
             issued_at = now(),
             issued_by = $2,
@@ -2318,7 +2318,7 @@ export async function updateLiquidationRunStatusInPostgres(input: {
   } else if (input.nextStatus === 'closed') {
     await pgQuery(
       `
-        update public.iadmin_liquidation_runs
+        update countrify.iadmin_liquidation_runs
         set status = $1::iadmin_liquidation_status,
             closed_at = now(),
             closed_by = $2
@@ -2330,7 +2330,7 @@ export async function updateLiquidationRunStatusInPostgres(input: {
     // draft / calculated → reset issued + closed
     await pgQuery(
       `
-        update public.iadmin_liquidation_runs
+        update countrify.iadmin_liquidation_runs
         set status = $1::iadmin_liquidation_status,
             issued_at = null,
             issued_by = null,
@@ -2373,7 +2373,7 @@ export async function listReminderRunsWithItemsFromPostgres(input: {
           h.full_name,
           h.phone,
           h.is_active
-        from public.iadmin_unit_holders h
+        from countrify.iadmin_unit_holders h
         order by h.unit_id, h.is_active desc, h.created_at asc
       )
       select
@@ -2388,9 +2388,9 @@ export async function listReminderRunsWithItemsFromPostgres(input: {
         u.code as unit_code,
         ch.full_name as holder_full_name,
         ch.phone as holder_phone
-      from public.iadmin_liquidation_runs r
-      inner join public.iadmin_liquidation_items i on i.liquidation_run_id = r.id
-      left join public.iadmin_units u on u.id = i.unit_id
+      from countrify.iadmin_liquidation_runs r
+      inner join countrify.iadmin_liquidation_items i on i.liquidation_run_id = r.id
+      left join countrify.iadmin_units u on u.id = i.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
       where r.administration_id = $1
         and r.status in ('issued', 'closed')
@@ -2409,7 +2409,7 @@ export async function sumLivePaymentsByItemsFromPostgres(
   const result = await pgQuery<{ liquidation_item_id: string; amount: string }>(
     `
       select liquidation_item_id, amount::text as amount
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where liquidation_run_id = any($1::uuid[])
         and is_void = false
         and liquidation_item_id is not null
@@ -2430,7 +2430,7 @@ export async function listExistingRemindersTodayFromPostgres(input: {
   const result = await pgQuery<{ liquidation_item_id: string; reminder_kind: string }>(
     `
       select liquidation_item_id, reminder_kind::text as reminder_kind
-      from public.iadmin_reminders
+      from countrify.iadmin_reminders
       where liquidation_item_id = any($1::uuid[])
         and generated_at >= $2::timestamptz
     `,
@@ -2451,7 +2451,7 @@ export async function insertReminderInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      insert into public.iadmin_reminders (
+      insert into countrify.iadmin_reminders (
         administration_id, managed_property_id, liquidation_item_id, reminder_kind,
         status, amount_due, due_label, due_date, message_body
       )
@@ -2474,7 +2474,7 @@ export async function getReminderAdminFromPostgres(
   reminderId: string,
 ): Promise<{ id: string; administration_id: string } | null> {
   const result = await pgQuery<{ id: string; administration_id: string }>(
-    `select id, administration_id from public.iadmin_reminders where id = $1 limit 1`,
+    `select id, administration_id from countrify.iadmin_reminders where id = $1 limit 1`,
     [reminderId],
   )
   return result.rows[0] ?? null
@@ -2488,13 +2488,13 @@ export async function setReminderStatusInPostgres(input: {
 }): Promise<void> {
   if (input.status === 'sent') {
     await pgQuery(
-      `update public.iadmin_reminders set status = 'sent'::iadmin_reminder_status, sent_at = now(), sent_by = $1 where id = $2`,
+      `update countrify.iadmin_reminders set status = 'sent'::iadmin_reminder_status, sent_at = now(), sent_by = $1 where id = $2`,
       [input.actorProfileId, input.reminderId],
     )
   } else {
     await pgQuery(
       `
-        update public.iadmin_reminders
+        update countrify.iadmin_reminders
         set status = 'dismissed'::iadmin_reminder_status,
             dismissed_at = now(),
             dismissed_by = $1,
@@ -2516,7 +2516,7 @@ export async function bulkUpdatePendingRemindersInPostgres(input: {
   if (input.status === 'sent') {
     const result = await pgQuery<{ id: string }>(
       `
-        update public.iadmin_reminders
+        update countrify.iadmin_reminders
         set status = 'sent'::iadmin_reminder_status, sent_at = now(), sent_by = $1
         where administration_id = $2
           and id = any($3::uuid[])
@@ -2529,7 +2529,7 @@ export async function bulkUpdatePendingRemindersInPostgres(input: {
   }
   const result = await pgQuery<{ id: string }>(
     `
-      update public.iadmin_reminders
+      update countrify.iadmin_reminders
       set status = 'dismissed'::iadmin_reminder_status, dismissed_at = now(), dismissed_by = $1
       where administration_id = $2
         and id = any($3::uuid[])
@@ -2569,8 +2569,8 @@ export async function getManagedPropertyForProjectionFromPostgres(propertyId: st
         mp.management_fee_pct::text as management_fee_pct,
         b.name as building_name,
         b.total_units
-      from public.iadmin_managed_properties mp
-      inner join public.buildings b on b.id = mp.building_id
+      from countrify.iadmin_managed_properties mp
+      inner join countrify.buildings b on b.id = mp.building_id
       where mp.id = $1
       limit 1
     `,
@@ -2605,8 +2605,8 @@ export async function listImputedExpensesForProjectionFromPostgres(input: {
         e.expense_kind::text as expense_kind,
         e.issued_at::text as issued_at,
         p.name as provider_name
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
       where e.managed_property_id = $1
         and e.issued_at >= $2::date
         and e.status in ('imputed', 'approved')
@@ -2621,7 +2621,7 @@ export async function listCashAccountsByPropertyFromPostgres(propertyId: string)
   Array<{ id: string; name: string; kind: string | null; is_active: boolean }>
 > {
   const result = await pgQuery<{ id: string; name: string; kind: string | null; is_active: boolean }>(
-    `select id, name, kind::text as kind, is_active from public.iadmin_cash_accounts where managed_property_id = $1`,
+    `select id, name, kind::text as kind, is_active from countrify.iadmin_cash_accounts where managed_property_id = $1`,
     [propertyId],
   )
   return result.rows
@@ -2630,7 +2630,7 @@ export async function listCashAccountsByPropertyFromPostgres(propertyId: string)
 export async function sumBankMovementsForAccountsFromPostgres(accountIds: string[]): Promise<number> {
   if (accountIds.length === 0) return 0
   const result = await pgQuery<{ total: string }>(
-    `select coalesce(sum(amount), 0)::text as total from public.iadmin_bank_movements where cash_account_id = any($1::uuid[])`,
+    `select coalesce(sum(amount), 0)::text as total from countrify.iadmin_bank_movements where cash_account_id = any($1::uuid[])`,
     [accountIds],
   )
   return Number(result.rows[0]?.total ?? 0)
@@ -2662,8 +2662,8 @@ export async function listIssuedLiquidationRunsForProjectionFromPostgres(input: 
         r.extraordinary_total::text as extraordinary_total,
         ap.period_year,
         ap.period_month
-      from public.iadmin_liquidation_runs r
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      from countrify.iadmin_liquidation_runs r
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
       where r.managed_property_id = $1 and r.status in ('issued', 'closed')
       order by r.generated_at desc
       limit $2
@@ -2677,7 +2677,7 @@ export async function listActivePaymentsForProjectionFromPostgres(propertyId: st
   Array<{ amount: string; liquidation_run_id: string | null }>
 > {
   const result = await pgQuery<{ amount: string; liquidation_run_id: string | null }>(
-    `select amount::text as amount, liquidation_run_id from public.iadmin_payments where managed_property_id = $1 and is_void = false`,
+    `select amount::text as amount, liquidation_run_id from countrify.iadmin_payments where managed_property_id = $1 and is_void = false`,
     [propertyId],
   )
   return result.rows
@@ -2701,7 +2701,7 @@ export async function insertBankMovementInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_bank_movements (
+      insert into countrify.iadmin_bank_movements (
         administration_id, managed_property_id, cash_account_id, movement_date,
         description, amount, external_ref, movement_kind, expense_id, created_by
       )
@@ -2727,12 +2727,12 @@ export async function insertBankMovementInPostgres(input: {
 }
 
 export async function deleteBankMovementInPostgres(movementId: string): Promise<void> {
-  await pgQuery(`delete from public.iadmin_bank_movements where id = $1`, [movementId])
+  await pgQuery(`delete from countrify.iadmin_bank_movements where id = $1`, [movementId])
 }
 
 export async function callIAdminNextReceiptNumberInPostgres(adminId: string): Promise<string> {
   const result = await pgQuery<{ result: string }>(
-    `select public.iadmin_next_receipt_number(admin_id := $1) as result`,
+    `select countrify.iadmin_next_receipt_number(admin_id := $1) as result`,
     [adminId],
   )
   return result.rows[0].result
@@ -2758,7 +2758,7 @@ export async function insertCollectionPaymentInPostgres(input: {
 }): Promise<{ id: string; receipt_number: string }> {
   const result = await pgQuery<{ id: string; receipt_number: string }>(
     `
-      insert into public.iadmin_payments (
+      insert into countrify.iadmin_payments (
         administration_id, managed_property_id, liquidation_run_id, liquidation_item_id,
         unit_id, cash_account_id, bank_movement_id, amount, surcharge_amount, paid_at,
         method, reference, receipt_number, due_label, notes, created_by
@@ -2806,7 +2806,7 @@ export async function getPaymentForVoidFromPostgres(paymentId: string): Promise<
   }>(
     `
       select id, administration_id, managed_property_id, liquidation_run_id, bank_movement_id, is_void
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where id = $1
       limit 1
     `,
@@ -2822,7 +2822,7 @@ export async function voidPaymentInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_payments
+      update countrify.iadmin_payments
       set is_void = true,
           voided_at = now(),
           voided_by = $1,
@@ -2847,7 +2847,7 @@ export async function getManagedPropertyOperationalSettingsFromPostgres(property
   }>(
     `
       select administration_id, operational_settings
-      from public.iadmin_managed_properties
+      from countrify.iadmin_managed_properties
       where id = $1
       limit 1
     `,
@@ -2867,7 +2867,7 @@ export async function updateManagedPropertyOperationalSettingsInPostgres(input: 
 }): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_managed_properties
+      update countrify.iadmin_managed_properties
       set operational_settings = $2::jsonb
       where id = $1
     `,
@@ -2906,7 +2906,7 @@ export async function listOpenLedgerEntriesByUnitFromPostgres(input: {
         amount::text as amount,
         balance_open::text as balance_open,
         created_at::text as created_at
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where administration_id = $1
         and unit_id = $2
         and status in ('open', 'partially_paid')
@@ -2933,7 +2933,7 @@ export async function sumOpenLedgerBalanceByUnitForPropertyFromPostgres(input: {
       select
         unit_id,
         coalesce(sum(balance_open), 0)::text as open_balance
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where managed_property_id = $1
         and status in ('open', 'partially_paid')
         and entry_type <> 'pago'
@@ -2954,7 +2954,7 @@ export async function getLiveLedgerEntriesByRunCountFromPostgres(runId: string):
   const result = await pgQuery<{ count: string }>(
     `
       select count(*)::text as count
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where liquidation_run_id = $1
         and status <> 'void'
     `,
@@ -2967,7 +2967,7 @@ export async function getLivePaymentsCountByRunFromPostgres(runId: string): Prom
   const result = await pgQuery<{ count: string }>(
     `
       select count(*)::text as count
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where liquidation_run_id = $1
         and is_void = false
     `,
@@ -2997,7 +2997,7 @@ async function insertLedgerEntryInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into public.iadmin_unit_ledger_entries (
+      insert into countrify.iadmin_unit_ledger_entries (
         administration_id, managed_property_id, unit_id, accounting_period_id,
         liquidation_run_id, liquidation_item_id, payment_id, entry_type,
         origin_type, origin_id, description, due_date, amount, balance_open,
@@ -3046,7 +3046,7 @@ async function voidLedgerEntriesInPostgres(input: {
   // balance parcial de entries `partially_paid`, ya que el void lo lleva a 0.
   await pgQuery(
     `
-      update public.iadmin_unit_ledger_entries
+      update countrify.iadmin_unit_ledger_entries
       set status = 'void'::iadmin_ledger_entry_status,
           metadata = coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
             'pre_void', jsonb_build_object(
@@ -3087,7 +3087,7 @@ async function getSupersedingRunIdFromPostgres(runId: string): Promise<string | 
   const result = await pgQuery<{ void_reason: string }>(
     `
       select void_reason
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where liquidation_run_id = $1
         and status = 'void'
         and void_reason like 'migrated_to_run:%'
@@ -3103,7 +3103,7 @@ async function getSupersedingRunIdFromPostgres(runId: string): Promise<string | 
 async function restoreMigratedLedgerEntriesForRunInPostgres(runId: string): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_unit_ledger_entries
+      update countrify.iadmin_unit_ledger_entries
       set
         balance_open = coalesce(
           nullif(metadata #>> '{pre_void,balance_open}', '')::numeric,
@@ -3154,7 +3154,7 @@ export async function markLateFeesAbsorbedByItemInPostgres(input: {
 }): Promise<void> {
   await pgQuery(
     `
-      update public.iadmin_unit_ledger_entries le
+      update countrify.iadmin_unit_ledger_entries le
       set
         balance_open = 0,
         status = 'paid'::iadmin_ledger_entry_status,
@@ -3165,7 +3165,7 @@ export async function markLateFeesAbsorbedByItemInPostgres(input: {
           'absorbed_by_actor', coalesce($4::text, ''),
           'pre_absorbed_balance_open', le.balance_open::text
         )
-      from public.iadmin_liquidation_runs r
+      from countrify.iadmin_liquidation_runs r
       where le.liquidation_run_id = r.id
         and le.unit_id = $1::uuid
         and le.entry_type = 'recargo_mora'
@@ -3205,8 +3205,8 @@ export async function materializeLateFeesForUnitInPostgres(input: {
           le.liquidation_item_id,
           min(le.due_date)::text as due_date,
           sum(le.amount) as base_amount
-        from public.iadmin_unit_ledger_entries le
-        left join public.iadmin_liquidation_items li on li.id = le.liquidation_item_id
+        from countrify.iadmin_unit_ledger_entries le
+        left join countrify.iadmin_liquidation_items li on li.id = le.liquidation_item_id
         where le.administration_id = $1
           and le.unit_id = $2
           and le.status in ('open', 'partially_paid', 'paid')
@@ -3222,7 +3222,7 @@ export async function materializeLateFeesForUnitInPostgres(input: {
           liquidation_item_id,
           coalesce(sum(amount), 0) as total_amount,
           coalesce(sum(balance_open), 0) as total_open
-        from public.iadmin_unit_ledger_entries
+        from countrify.iadmin_unit_ledger_entries
         where administration_id = $1
           and unit_id = $2
           and status <> 'void'
@@ -3241,7 +3241,7 @@ export async function materializeLateFeesForUnitInPostgres(input: {
         coalesce(es.total_amount, 0)::text as existing_surcharge_amount,
         coalesce(es.total_open, 0)::text as existing_surcharge_open
       from live_charge lc
-      inner join public.iadmin_liquidation_runs r on r.id = lc.liquidation_run_id
+      inner join countrify.iadmin_liquidation_runs r on r.id = lc.liquidation_run_id
       left join existing_surcharge es on es.liquidation_item_id = lc.liquidation_item_id
       where lc.liquidation_run_id is not null
         and r.administration_id = $1
@@ -3299,7 +3299,7 @@ export async function materializeLateFeesForAdministrationInPostgres(input: {
   const units = await pgQuery<{ unit_id: string }>(
     `
       select distinct unit_id
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where administration_id = $1
         and status in ('open', 'partially_paid', 'paid')
         and entry_type in ('expensa_ordinaria', 'expensa_extraordinaria', 'saldo_anterior_migrado')
@@ -3344,8 +3344,8 @@ export async function createLedgerEntriesForIssuedRunInPostgres(input: {
         li.ordinary_amount::text as ordinary_amount,
         li.extraordinary_amount::text as extraordinary_amount,
         li.particular_amount::text as particular_amount
-      from public.iadmin_liquidation_runs r
-      inner join public.iadmin_liquidation_items li on li.liquidation_run_id = r.id
+      from countrify.iadmin_liquidation_runs r
+      inner join countrify.iadmin_liquidation_items li on li.liquidation_run_id = r.id
       where r.id = $1
     `,
     [input.runId],
@@ -3460,7 +3460,7 @@ export async function voidLedgerEntriesForRunInPostgres(input: {
   const result = await pgQuery<{ id: string }>(
     `
       select id
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where liquidation_run_id = $1
         and status <> 'void'
     `,
@@ -3509,7 +3509,7 @@ export async function applyPaymentToLedgerInPostgres(input: {
         amount::text as amount,
         balance_open::text as balance_open,
         created_at::text as created_at
-      from public.iadmin_unit_ledger_entries
+      from countrify.iadmin_unit_ledger_entries
       where administration_id = $1
         and unit_id = $2
         and status in ('open', 'partially_paid')
@@ -3560,7 +3560,7 @@ export async function applyPaymentToLedgerInPostgres(input: {
 
     await pgQuery(
       `
-        update public.iadmin_unit_ledger_entries
+        update countrify.iadmin_unit_ledger_entries
         set balance_open = $1,
             status = $2::iadmin_ledger_entry_status
         where id = $3
@@ -3570,7 +3570,7 @@ export async function applyPaymentToLedgerInPostgres(input: {
 
     await pgQuery(
       `
-        insert into public.iadmin_payment_applications (
+        insert into countrify.iadmin_payment_applications (
           administration_id, payment_id, payment_entry_id, applied_to_entry_id,
           unit_id, amount, created_by
         )
@@ -3604,7 +3604,7 @@ export async function reversePaymentApplicationsInLedgerInPostgres(input: {
   }>(
     `
       select id, applied_to_entry_id, amount::text as amount, payment_entry_id
-      from public.iadmin_payment_applications
+      from countrify.iadmin_payment_applications
       where payment_id = $1
         and voided_at is null
       order by created_at desc
@@ -3615,7 +3615,7 @@ export async function reversePaymentApplicationsInLedgerInPostgres(input: {
   for (const app of apps.rows) {
     await pgQuery(
       `
-        update public.iadmin_unit_ledger_entries
+        update countrify.iadmin_unit_ledger_entries
         set balance_open = balance_open + $1,
             status = case
               when balance_open + $1 >= amount then 'open'::iadmin_ledger_entry_status
@@ -3629,7 +3629,7 @@ export async function reversePaymentApplicationsInLedgerInPostgres(input: {
 
   await pgQuery(
     `
-      update public.iadmin_payment_applications
+      update countrify.iadmin_payment_applications
       set voided_at = now(),
           voided_by = $1,
           void_reason = $2
@@ -3641,7 +3641,7 @@ export async function reversePaymentApplicationsInLedgerInPostgres(input: {
 
   await pgQuery(
     `
-      update public.iadmin_unit_ledger_entries
+      update countrify.iadmin_unit_ledger_entries
       set status = 'void'::iadmin_ledger_entry_status,
           voided_at = now(),
           voided_by = $1,

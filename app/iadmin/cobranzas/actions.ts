@@ -204,7 +204,7 @@ export async function validatePaymentClaim(input: z.input<typeof validateClaimSc
     `select id, administration_id, managed_property_id, unit_id, liquidation_item_id,
             reporter_profile_id, amount::text as amount, paid_at_claimed::text as paid_at_claimed,
             method, reference, notes, document_object_key, status::text as status
-       from public.iadmin_payment_claims
+       from countrify.iadmin_payment_claims
       where id = $1
       limit 1`,
     [parsed.claimId],
@@ -287,7 +287,7 @@ export async function validatePaymentClaim(input: z.input<typeof validateClaimSc
   })
 
   await pgQuery(
-    `update public.iadmin_payment_claims
+    `update countrify.iadmin_payment_claims
         set status = 'validated', validated_by = $2, validated_at = now(), payment_id = $3
       where id = $1`,
     [claim.id, profile.id, payment.id],
@@ -319,7 +319,7 @@ export async function rejectPaymentClaim(input: z.input<typeof rejectClaimSchema
     `select id, administration_id, managed_property_id, unit_id, liquidation_item_id,
             reporter_profile_id, amount::text as amount, paid_at_claimed::text as paid_at_claimed,
             method, reference, notes, document_object_key, status::text as status
-       from public.iadmin_payment_claims
+       from countrify.iadmin_payment_claims
       where id = $1
       limit 1`,
     [parsed.claimId],
@@ -334,7 +334,7 @@ export async function rejectPaymentClaim(input: z.input<typeof rejectClaimSchema
   })
 
   await pgQuery(
-    `update public.iadmin_payment_claims
+    `update countrify.iadmin_payment_claims
         set status = 'rejected', validated_by = $2, validated_at = now(), rejected_reason = $3
       where id = $1`,
     [claim.id, profile.id, parsed.reason],

@@ -28,7 +28,7 @@ export async function buildVecinoContext(userId: string): Promise<VecinoContext 
     unit: string | null
     building_id: string | null
   }>(
-    `select full_name, floor, unit, building_id from public.profiles where id = $1 limit 1`,
+    `select full_name, floor, unit, building_id from countrify.profiles where id = $1 limit 1`,
     [userId],
   )
   const profile = profileResult.rows[0]
@@ -39,7 +39,7 @@ export async function buildVecinoContext(userId: string): Promise<VecinoContext 
   const [building, promotions, saved, used, marketplace, complaints] = await Promise.all([
     buildingId
       ? pgQuery<{ name: string; address: string | null }>(
-          `select name, address from public.buildings where id = $1 limit 1`,
+          `select name, address from countrify.buildings where id = $1 limit 1`,
           [buildingId],
         ).then((r) => r.rows[0] ?? null)
       : Promise.resolve(null),
@@ -63,19 +63,19 @@ export async function buildVecinoContext(userId: string): Promise<VecinoContext 
       [today()],
     ).then((r) => r.rows),
     pgQuery<{ promotion_id: string }>(
-      `select promotion_id from public.saved_promotions where profile_id = $1`,
+      `select promotion_id from countrify.saved_promotions where profile_id = $1`,
       [userId],
     ).then((r) => r.rows.map((row: { promotion_id: string }) => row.promotion_id)),
     pgQuery<{ promotion_id: string }>(
-      `select promotion_id from public.promotion_redemptions where profile_id = $1`,
+      `select promotion_id from countrify.promotion_redemptions where profile_id = $1`,
       [userId],
     ).then((r) => r.rows.map((row: { promotion_id: string }) => row.promotion_id)),
     buildingId
       ? pgQuery<{ title: string; price: string; condition: string; seller_name: string | null }>(
           `
             select m.title, m.price::text as price, m.condition, p.full_name as seller_name
-            from public.marketplace_items m
-            left join public.profiles p on p.id = m.seller_profile_id
+            from countrify.marketplace_items m
+            left join countrify.profiles p on p.id = m.seller_profile_id
             where m.building_id = $1 and m.is_active = true
             limit 15
           `,
@@ -86,7 +86,7 @@ export async function buildVecinoContext(userId: string): Promise<VecinoContext 
       ? pgQuery<{ title: string; status: string; created_at: string }>(
           `
             select title, status::text as status, created_at::text as created_at
-            from public.complaint_cases
+            from countrify.complaint_cases
             where author_profile_id = $1
             order by created_at desc
             limit 10
@@ -169,13 +169,13 @@ export interface ConsorcioContext {
 
 export async function buildConsorcioContext(userId: string): Promise<ConsorcioContext | null> {
   const profileResult = await pgQuery<{ full_name: string | null }>(
-    `select full_name from public.profiles where id = $1 limit 1`,
+    `select full_name from countrify.profiles where id = $1 limit 1`,
     [userId],
   )
   const profile = profileResult.rows[0]
 
   const assignmentsResult = await pgQuery<{ building_id: string }>(
-    `select building_id from public.building_admin_assignments where profile_id = $1`,
+    `select building_id from countrify.building_admin_assignments where profile_id = $1`,
     [userId],
   )
   const buildingIds = assignmentsResult.rows.map((r: { building_id: string }) => r.building_id)
@@ -190,17 +190,17 @@ export async function buildConsorcioContext(userId: string): Promise<ConsorcioCo
 
   const [buildings, neighbors, complaints] = await Promise.all([
     pgQuery<{ id: string; name: string; address: string | null; total_units: number | null }>(
-      `select id, name, address, total_units from public.buildings where id = any($1::uuid[])`,
+      `select id, name, address, total_units from countrify.buildings where id = any($1::uuid[])`,
       [buildingIds],
     ).then((r) => r.rows),
     pgQuery<{ full_name: string | null; floor: string | null; unit: string | null; building_id: string | null }>(
-      `select full_name, floor, unit, building_id from public.profiles where role = 'vecino' and building_id = any($1::uuid[]) order by full_name`,
+      `select full_name, floor, unit, building_id from countrify.profiles where role = 'vecino' and building_id = any($1::uuid[]) order by full_name`,
       [buildingIds],
     ).then((r) => r.rows),
     pgQuery<{ title: string; status: string; building_id: string; created_at: string }>(
       `
         select title, status::text as status, building_id, created_at::text as created_at
-        from public.complaint_cases
+        from countrify.complaint_cases
         where building_id = any($1::uuid[])
         order by created_at desc
         limit 30
@@ -274,7 +274,7 @@ export interface NegocioContext {
 
 export async function buildNegocioContext(userId: string): Promise<NegocioContext | null> {
   const profileResult = await pgQuery<{ full_name: string | null; business_id: string | null }>(
-    `select full_name, business_id from public.profiles where id = $1 limit 1`,
+    `select full_name, business_id from countrify.profiles where id = $1 limit 1`,
     [userId],
   )
   const profile = profileResult.rows[0]
@@ -297,7 +297,7 @@ export async function buildNegocioContext(userId: string): Promise<NegocioContex
         }>(
           `
             select p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
-                   coalesce((select count(*)::int from public.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
+                   coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
             from public.promotions p
             where p.business_id = $1
             order by p.created_at desc
@@ -306,7 +306,7 @@ export async function buildNegocioContext(userId: string): Promise<NegocioContex
         ).then((r) => r.rows)
       : Promise.resolve([]),
     pgQuery<{ c: number }>(
-      `select count(*)::int as c from public.profiles where role = 'vecino'`,
+      `select count(*)::int as c from countrify.profiles where role = 'vecino'`,
     ).then((r) => r.rows[0]?.c ?? 0),
   ])
 
@@ -352,10 +352,10 @@ export interface SuperAdminContext {
 export async function buildSuperAdminContext(): Promise<SuperAdminContext | null> {
   const [users, buildings, businesses, promotions, redemptionCountResult] = await Promise.all([
     pgQuery<{ role: string; building_id: string | null }>(
-      `select role::text as role, building_id from public.profiles`,
+      `select role::text as role, building_id from countrify.profiles`,
     ).then((r) => r.rows),
     pgQuery<{ id: string; name: string; address: string | null; total_units: number | null }>(
-      `select id, name, address, total_units from public.buildings order by name`,
+      `select id, name, address, total_units from countrify.buildings order by name`,
     ).then((r) => r.rows),
     pgQuery<{ id: string; name: string; category: string }>(
       `select id, name, category from public.businesses order by name`,
@@ -373,7 +373,7 @@ export async function buildSuperAdminContext(): Promise<SuperAdminContext | null
       `
         select p.id, p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
                p.business_id, b.name as business_name,
-               coalesce((select count(*)::int from public.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
+               coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
         from public.promotions p
         left join public.businesses b on b.id = p.business_id
         order by p.created_at desc
@@ -381,7 +381,7 @@ export async function buildSuperAdminContext(): Promise<SuperAdminContext | null
       `,
     ).then((r) => r.rows),
     pgQuery<{ c: number }>(
-      `select count(*)::int as c from public.promotion_redemptions`,
+      `select count(*)::int as c from countrify.promotion_redemptions`,
     ).then((r) => r.rows[0]?.c ?? 0),
   ])
 

@@ -105,7 +105,7 @@ export async function upsertMonthlyCell(
   // no se admiten ediciones (afectaría el cálculo de lo que ya se emitió).
   const liqRes = await pgQuery<{ status: string }>(
     `select status::text as status
-       from public.iadmin_liquidation_runs
+       from countrify.iadmin_liquidation_runs
       where managed_property_id = $1
         and accounting_period_id = $2
         and status in ('issued', 'closed')

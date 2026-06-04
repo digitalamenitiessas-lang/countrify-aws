@@ -145,7 +145,7 @@ async function createExpenseImpl(input: CreateExpenseInput): Promise<{ id: strin
   // Gasto particular: validamos que la unidad pertenezca al consorcio.
   if (parsed.unitId) {
     const unitRes = await pgQuery<{ id: string }>(
-      `select id from public.iadmin_units where id = $1 and managed_property_id = $2 limit 1`,
+      `select id from countrify.iadmin_units where id = $1 and managed_property_id = $2 limit 1`,
       [parsed.unitId, parsed.managedPropertyId],
     )
     if (!unitRes.rows[0]) {
@@ -212,7 +212,7 @@ async function createExpenseImpl(input: CreateExpenseInput): Promise<{ id: strin
       managed_property_id: string
     }>(
       `select status::text as status, period_year, period_month, managed_property_id
-         from public.iadmin_accounting_periods
+         from countrify.iadmin_accounting_periods
         where id = $1
         limit 1`,
       [accountingPeriodId],
@@ -232,7 +232,7 @@ async function createExpenseImpl(input: CreateExpenseInput): Promise<{ id: strin
   // pueden cargar más gastos sin reabrirla — sino se rompe el cálculo.
   const liqRes = await pgQuery<{ status: string }>(
     `select status::text as status
-       from public.iadmin_liquidation_runs
+       from countrify.iadmin_liquidation_runs
       where managed_property_id = $1
         and accounting_period_id = $2
         and status in ('issued', 'closed')
@@ -625,7 +625,7 @@ async function repeatPreviousMonthExpensesImpl(
   if (targetPeriod) {
     const liqRes = await pgQuery<{ status: string }>(
       `select status::text as status
-         from public.iadmin_liquidation_runs
+         from countrify.iadmin_liquidation_runs
         where managed_property_id = $1
           and accounting_period_id = $2
           and status in ('issued', 'closed')

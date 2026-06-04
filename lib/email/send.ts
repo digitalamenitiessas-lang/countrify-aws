@@ -48,7 +48,7 @@ async function checkProfileAllowsSend(
     email_notifications: Record<string, boolean>
   }>(
     `select email_blocked, email_blocked_reason, email_notifications
-       from public.profiles where id = $1 limit 1`,
+       from countrify.profiles where id = $1 limit 1`,
     [profileId],
   )
   const row = res.rows[0]
@@ -71,7 +71,7 @@ async function checkProfileAllowsSend(
 // Si ya existe un email_events con el mismo idempotency_key, devuelve el row.
 async function findExistingByIdempotency(idempotencyKey: string) {
   const res = await pgQuery<{ id: string; ses_message_id: string | null }>(
-    `select id, ses_message_id from public.email_events where idempotency_key = $1 limit 1`,
+    `select id, ses_message_id from countrify.email_events where idempotency_key = $1 limit 1`,
     [idempotencyKey],
   )
   return res.rows[0] ?? null
@@ -88,7 +88,7 @@ async function recordEvent(input: {
   error?: string
 }): Promise<string> {
   const res = await pgQuery<{ id: string }>(
-    `insert into public.email_events
+    `insert into countrify.email_events
        (template_key, to_email, to_profile_id, subject, idempotency_key,
         status, ses_message_id, error, metadata)
      values ($1, $2, $3, $4, $5, $6, $7, $8, coalesce($9::jsonb, '{}'::jsonb))

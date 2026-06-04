@@ -80,7 +80,7 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
     `
       with chosen_holder as (
         select distinct on (unit_id) unit_id, full_name, holder_kind::text as holder_kind, is_active
-        from public.iadmin_unit_holders
+        from countrify.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       )
       select
@@ -101,14 +101,14 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
         ap.period_year, ap.period_month,
         u.code as unit_code, u.kind::text as unit_kind,
         ch.full_name as holder_full_name, ch.holder_kind as holder_kind
-      from public.iadmin_item_share_tokens t
-      inner join public.iadmin_liquidation_items i on i.id = t.liquidation_item_id
-      inner join public.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
-      inner join public.iadmin_administrations a on a.id = r.administration_id
-      inner join public.iadmin_managed_properties mp on mp.id = r.managed_property_id
-      inner join public.buildings b on b.id = mp.building_id
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
-      inner join public.iadmin_units u on u.id = i.unit_id
+      from countrify.iadmin_item_share_tokens t
+      inner join countrify.iadmin_liquidation_items i on i.id = t.liquidation_item_id
+      inner join countrify.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
+      inner join countrify.iadmin_administrations a on a.id = r.administration_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = r.managed_property_id
+      inner join countrify.buildings b on b.id = mp.building_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      inner join countrify.iadmin_units u on u.id = i.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
       where t.token = $1
       limit 1
@@ -130,7 +130,7 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
   }>(
     `
       select receipt_number, paid_at::text as paid_at, amount::text as amount, method
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where liquidation_item_id = $1 and is_void = false
       order by paid_at desc
     `,
@@ -159,7 +159,7 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
 
   // Incrementar access_count (fire and forget)
   pgQuery(
-    `update public.iadmin_item_share_tokens set access_count = coalesce(access_count, 0) + 1, last_accessed_at = now() where token = $1`,
+    `update countrify.iadmin_item_share_tokens set access_count = coalesce(access_count, 0) + 1, last_accessed_at = now() where token = $1`,
     [token],
   ).catch(() => undefined)
 

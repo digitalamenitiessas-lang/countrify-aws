@@ -40,8 +40,8 @@ export async function GET(_req: Request, ctx: { params: Promise<{ id: string }> 
         e.description,
         e.amount::text as amount,
         e.document_url
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
       where e.managed_property_id = $1
         and e.accounting_period_id = $2
         and e.status = 'imputed'

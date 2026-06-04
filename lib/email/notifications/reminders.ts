@@ -48,13 +48,13 @@ export async function notifyReminderByEmail(input: {
         mp.display_name as property_display_name,
         b.name as building_name,
         t.token as share_token
-      from public.iadmin_reminders rem
-      join public.iadmin_liquidation_items li on li.id = rem.liquidation_item_id
-      join public.iadmin_liquidation_runs lr on lr.id = li.liquidation_run_id
-      join public.iadmin_managed_properties mp on mp.id = lr.managed_property_id
-      join public.buildings b on b.id = mp.building_id
-      join public.iadmin_units u on u.id = li.unit_id
-      left join public.iadmin_item_share_tokens t
+      from countrify.iadmin_reminders rem
+      join countrify.iadmin_liquidation_items li on li.id = rem.liquidation_item_id
+      join countrify.iadmin_liquidation_runs lr on lr.id = li.liquidation_run_id
+      join countrify.iadmin_managed_properties mp on mp.id = lr.managed_property_id
+      join countrify.buildings b on b.id = mp.building_id
+      join countrify.iadmin_units u on u.id = li.unit_id
+      left join countrify.iadmin_item_share_tokens t
         on t.liquidation_item_id = li.id and t.revoked_at is null
       where rem.id = $1
       limit 1
@@ -69,8 +69,8 @@ export async function notifyReminderByEmail(input: {
     `
       select distinct on (m.profile_id)
         m.profile_id, p.email, p.full_name
-      from public.unit_profile_memberships m
-      join public.profiles p on p.id = m.profile_id
+      from countrify.unit_profile_memberships m
+      join countrify.profiles p on p.id = m.profile_id
       where m.unit_id = $1
         and m.relationship_type = 'vecino_principal'
         and m.active = true

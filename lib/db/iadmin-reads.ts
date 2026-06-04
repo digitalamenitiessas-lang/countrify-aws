@@ -29,7 +29,7 @@ export async function listCashAccountsWithBalanceFromPostgres(
     `
       with sums as (
         select cash_account_id, coalesce(sum(amount), 0)::text as total, count(*)::int as moves_count
-        from public.iadmin_bank_movements
+        from countrify.iadmin_bank_movements
         where managed_property_id = $1
         group by cash_account_id
       )
@@ -49,7 +49,7 @@ export async function listCashAccountsWithBalanceFromPostgres(
         a.created_at::text as created_at,
         coalesce(s.total, '0') as current_balance,
         coalesce(s.moves_count, 0) as movements_count
-      from public.iadmin_cash_accounts a
+      from countrify.iadmin_cash_accounts a
       left join sums s on s.cash_account_id = a.id
       where a.managed_property_id = $1
       order by a.is_active desc, a.created_at asc
@@ -102,9 +102,9 @@ export async function listCashMovementsFromPostgres(input: {
         m.expense_id,
         e.description as expense_description,
         m.created_at::text as created_at
-      from public.iadmin_bank_movements m
-      left join public.iadmin_cash_accounts ca on ca.id = m.cash_account_id
-      left join public.iadmin_expenses e on e.id = m.expense_id
+      from countrify.iadmin_bank_movements m
+      left join countrify.iadmin_cash_accounts ca on ca.id = m.cash_account_id
+      left join countrify.iadmin_expenses e on e.id = m.expense_id
       where m.managed_property_id = $1
         and ($2::uuid is null or m.cash_account_id = $2)
       order by m.movement_date desc, m.created_at desc
@@ -151,12 +151,12 @@ export async function listRemindersWithContextFromPostgres(input: {
     `
       with chosen_holder as (
         select distinct on (unit_id) unit_id, full_name, phone, email, is_active
-        from public.iadmin_unit_holders
+        from countrify.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       ),
       live_token as (
         select distinct on (liquidation_item_id) liquidation_item_id, token
-        from public.iadmin_item_share_tokens
+        from countrify.iadmin_item_share_tokens
         where revoked_at is null
         order by liquidation_item_id, created_at desc
       )
@@ -181,11 +181,11 @@ export async function listRemindersWithContextFromPostgres(input: {
         r.sent_at::text as sent_at,
         r.dismissed_at::text as dismissed_at,
         lt.token as share_token
-      from public.iadmin_reminders r
-      left join public.iadmin_managed_properties mp on mp.id = r.managed_property_id
-      left join public.buildings b on b.id = mp.building_id
-      left join public.iadmin_liquidation_items i on i.id = r.liquidation_item_id
-      left join public.iadmin_units u on u.id = i.unit_id
+      from countrify.iadmin_reminders r
+      left join countrify.iadmin_managed_properties mp on mp.id = r.managed_property_id
+      left join countrify.buildings b on b.id = mp.building_id
+      left join countrify.iadmin_liquidation_items i on i.id = r.liquidation_item_id
+      left join countrify.iadmin_units u on u.id = i.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
       left join live_token lt on lt.liquidation_item_id = i.id
       where r.administration_id = $1
@@ -241,10 +241,10 @@ export async function getExpenseDetailRowFromPostgres(
         e.created_at::text as created_at,
         mp.display_name as property_display_name,
         b.name as building_name
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
-      left join public.iadmin_managed_properties mp on mp.id = e.managed_property_id
-      left join public.buildings b on b.id = mp.building_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
+      left join countrify.iadmin_managed_properties mp on mp.id = e.managed_property_id
+      left join countrify.buildings b on b.id = mp.building_id
       where e.id = $1
       limit 1
     `,
@@ -279,7 +279,7 @@ export async function listExpenseDocumentsWithExtractionFromPostgres(
         select distinct on (document_id)
           document_id, id, status, provider, suggested_fields, confidence,
           validated_by, validated_at, validation_notes
-        from public.iadmin_ai_document_extractions
+        from countrify.iadmin_ai_document_extractions
         order by document_id, created_at desc
       )
       select
@@ -297,7 +297,7 @@ export async function listExpenseDocumentsWithExtractionFromPostgres(
         x.validated_by as extraction_validated_by,
         x.validated_at::text as extraction_validated_at,
         x.validation_notes as extraction_validation_notes
-      from public.iadmin_expense_documents d
+      from countrify.iadmin_expense_documents d
       left join picked_extraction x on x.document_id = d.id
       where d.expense_id = $1
       order by d.uploaded_at desc
@@ -347,8 +347,8 @@ export async function getManagedPropertyFullFromPostgres(
         mp.notes, mp.is_active, mp.legal_info,
         mp.created_at::text as created_at,
         b.name as building_name, b.address as building_address, b.total_units
-      from public.iadmin_managed_properties mp
-      inner join public.buildings b on b.id = mp.building_id
+      from countrify.iadmin_managed_properties mp
+      inner join countrify.buildings b on b.id = mp.building_id
       where mp.id = $1
       limit 1
     `,
@@ -376,8 +376,8 @@ export async function listExpensesForDashboardFromPostgres(
         e.id, e.amount::text as amount, e.status::text as status,
         e.expense_kind::text as expense_kind, e.issued_at::text as issued_at,
         e.provider_id, p.name as provider_name
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
       where e.managed_property_id = $1
       order by e.issued_at desc nulls last
     `,
@@ -415,12 +415,12 @@ export async function listUnpaidPayableExpensesForPropertyFromPostgres(
         e.category, e.status::text as status, e.issued_at::text as issued_at,
         e.document_type, e.document_number,
         e.provider_id, p.name as provider_name
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
       where e.managed_property_id = $1
         and e.status in ('approved', 'imputed')
         and not exists (
-          select 1 from public.iadmin_bank_movements m
+          select 1 from countrify.iadmin_bank_movements m
           where m.expense_id = e.id and m.movement_kind = 'expense_payment'
         )
       order by e.issued_at asc nulls last, e.created_at asc
@@ -434,7 +434,7 @@ export async function countActiveUnitsByPropertyFromPostgres(
   propertyId: string,
 ): Promise<number> {
   const result = await pgQuery<{ c: number }>(
-    `select count(*)::int as c from public.iadmin_units where managed_property_id = $1 and is_active = true`,
+    `select count(*)::int as c from countrify.iadmin_units where managed_property_id = $1 and is_active = true`,
     [propertyId],
   )
   return result.rows[0]?.c ?? 0
@@ -464,8 +464,8 @@ export async function listDashboardRunsFromPostgres(input: {
         r.total_expenses::text as total_expenses,
         r.accounting_period_id,
         ap.period_year, ap.period_month
-      from public.iadmin_liquidation_runs r
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      from countrify.iadmin_liquidation_runs r
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
       where r.managed_property_id = $1 and r.status in ('calculated', 'issued', 'closed')
       order by r.generated_at desc
       limit $2
@@ -494,7 +494,7 @@ export async function listDashboardItemsByRunsFromPostgres(
              extraordinary_amount::text as extraordinary_amount,
              particular_amount::text as particular_amount,
              previous_balance::text as previous_balance
-      from public.iadmin_liquidation_items
+      from countrify.iadmin_liquidation_items
       where liquidation_run_id = any($1::uuid[])
     `,
     [runIds],
@@ -507,7 +507,7 @@ export async function listPaidExpenseIdsFromPostgres(
 ): Promise<Set<string>> {
   if (expenseIds.length === 0) return new Set()
   const result = await pgQuery<{ expense_id: string }>(
-    `select distinct expense_id from public.iadmin_bank_movements where movement_kind = 'expense_payment' and expense_id = any($1::uuid[])`,
+    `select distinct expense_id from countrify.iadmin_bank_movements where movement_kind = 'expense_payment' and expense_id = any($1::uuid[])`,
     [expenseIds],
   )
   return new Set(result.rows.map((r: { expense_id: string }) => r.expense_id).filter(Boolean))
@@ -515,7 +515,7 @@ export async function listPaidExpenseIdsFromPostgres(
 
 export async function sumLivePaymentsForRunFromPostgres(runId: string): Promise<number> {
   const result = await pgQuery<{ total: string }>(
-    `select coalesce(sum(amount), 0)::text as total from public.iadmin_payments where liquidation_run_id = $1 and is_void = false`,
+    `select coalesce(sum(amount), 0)::text as total from countrify.iadmin_payments where liquidation_run_id = $1 and is_void = false`,
     [runId],
   )
   return Number(result.rows[0]?.total ?? 0)
@@ -527,9 +527,9 @@ export async function countPendingDocsForPropertyFromPostgres(
   const result = await pgQuery<{ c: number }>(
     `
       select count(*)::int as c
-      from public.iadmin_ai_document_extractions x
-      inner join public.iadmin_expense_documents d on d.id = x.document_id
-      inner join public.iadmin_expenses e on e.id = d.expense_id
+      from countrify.iadmin_ai_document_extractions x
+      inner join countrify.iadmin_expense_documents d on d.id = x.document_id
+      inner join countrify.iadmin_expenses e on e.id = d.expense_id
       where e.managed_property_id = $1 and x.status::text in ('pending', 'suggested')
     `,
     [propertyId],
@@ -541,7 +541,7 @@ export async function countActiveRecurringProvidersFromPostgres(
   administrationId: string,
 ): Promise<number> {
   const result = await pgQuery<{ c: number }>(
-    `select count(*)::int as c from public.iadmin_providers where administration_id = $1 and is_recurring = true and is_active = true`,
+    `select count(*)::int as c from countrify.iadmin_providers where administration_id = $1 and is_recurring = true and is_active = true`,
     [administrationId],
   )
   return result.rows[0]?.c ?? 0
@@ -568,7 +568,7 @@ export async function listActiveUnitsWithProrataAndHolderFromPostgres(
       with chosen_holder as (
         select distinct on (unit_id)
           unit_id, full_name, phone, is_active
-        from public.iadmin_unit_holders
+        from countrify.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       )
       select
@@ -576,7 +576,7 @@ export async function listActiveUnitsWithProrataAndHolderFromPostgres(
         u.prorata_coefficient::text as prorata_coefficient,
         ch.full_name as holder_full_name,
         ch.phone as holder_phone
-      from public.iadmin_units u
+      from countrify.iadmin_units u
       left join chosen_holder ch on ch.unit_id = u.id
       where u.managed_property_id = $1 and u.is_active = true
       order by u.code
@@ -615,7 +615,7 @@ export async function getRunForPeriodFromPostgres(input: {
              extraordinary_total::text as extraordinary_total,
              previous_balance::text as previous_balance,
              due_dates
-      from public.iadmin_liquidation_runs
+      from countrify.iadmin_liquidation_runs
       where managed_property_id = $1 and accounting_period_id = $2
       limit 1
     `,
@@ -634,7 +634,7 @@ export async function listLiquidationItemsByRunBasicFromPostgres(
              extraordinary_amount::text as extraordinary_amount,
              particular_amount::text as particular_amount,
              previous_balance::text as previous_balance
-      from public.iadmin_liquidation_items
+      from countrify.iadmin_liquidation_items
       where liquidation_run_id = $1
     `,
     [runId],
@@ -662,9 +662,9 @@ export async function sumOpenLateFeesByUnitPriorPeriodsFromPostgres(input: {
   const result = await pgQuery<{ unit_id: string; total: string }>(
     `
       select li.unit_id, coalesce(sum(le.balance_open), 0)::text as total
-      from public.iadmin_unit_ledger_entries le
-      inner join public.iadmin_liquidation_items li on li.id = le.liquidation_item_id
-      inner join public.iadmin_liquidation_runs r on r.id = le.liquidation_run_id
+      from countrify.iadmin_unit_ledger_entries le
+      inner join countrify.iadmin_liquidation_items li on li.id = le.liquidation_item_id
+      inner join countrify.iadmin_liquidation_runs r on r.id = le.liquidation_run_id
       where r.managed_property_id = $1
         and ($2::uuid is null or r.accounting_period_id <> $2::uuid)
         and le.entry_type = 'recargo_mora'
@@ -691,8 +691,8 @@ export async function sumOpenLateFeesByUnitForRunFromPostgres(
   const result = await pgQuery<{ unit_id: string; total: string }>(
     `
       select li.unit_id, coalesce(sum(le.balance_open), 0)::text as total
-      from public.iadmin_unit_ledger_entries le
-      inner join public.iadmin_liquidation_items li on li.id = le.liquidation_item_id
+      from countrify.iadmin_unit_ledger_entries le
+      inner join countrify.iadmin_liquidation_items li on li.id = le.liquidation_item_id
       where le.liquidation_run_id = $1
         and le.entry_type = 'recargo_mora'
         and le.status in ('open', 'partially_paid')
@@ -714,7 +714,7 @@ export async function getMostRecentIssuedPriorRunItemsFromPostgres(input: {
   const result = await pgQuery<RunForMesaItemRow>(
     `
       with prior_run as (
-        select id from public.iadmin_liquidation_runs
+        select id from countrify.iadmin_liquidation_runs
         where managed_property_id = $1
           and ($2::uuid is null or accounting_period_id <> $2)
           and status in ('issued', 'closed')
@@ -726,7 +726,7 @@ export async function getMostRecentIssuedPriorRunItemsFromPostgres(input: {
              i.extraordinary_amount::text as extraordinary_amount,
              i.particular_amount::text as particular_amount,
              i.previous_balance::text as previous_balance
-      from public.iadmin_liquidation_items i
+      from countrify.iadmin_liquidation_items i
       where i.liquidation_run_id in (select id from prior_run)
     `,
     [input.managedPropertyId, input.excludePeriodId],
@@ -742,7 +742,7 @@ export async function sumLivePaymentsByUnitForItemsFromPostgres(
   const result = await pgQuery<{ unit_id: string | null; amount: string }>(
     `
       select unit_id, amount::text as amount
-      from public.iadmin_payments
+      from countrify.iadmin_payments
       where liquidation_item_id = any($1::uuid[]) and is_void = false
     `,
     [itemIds],
@@ -763,7 +763,7 @@ export async function sumImputedTotalsForPeriodFromPostgres(input: {
       select
         coalesce(sum(case when expense_kind::text = 'extraordinaria' then 0 else amount end), 0)::text as ord_total,
         coalesce(sum(case when expense_kind::text = 'extraordinaria' then amount else 0 end), 0)::text as ext_total
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1 and accounting_period_id = $2 and status = 'imputed'
     `,
     [input.managedPropertyId, input.accountingPeriodId],
@@ -803,7 +803,7 @@ export async function listActiveProvidersForGridFromPostgres(
              recurring_amount::text as recurring_amount,
              recurring_kind::text as recurring_kind,
              is_active, created_at::text as created_at
-      from public.iadmin_providers
+      from countrify.iadmin_providers
       where administration_id = $1 and is_active = true
     `,
     [administrationId],
@@ -840,12 +840,12 @@ export async function listExpensesForGridFromPostgres(input: {
       with first_doc as (
         select distinct on (expense_id)
           expense_id, id as doc_id, file_name, storage_path
-        from public.iadmin_expense_documents
+        from countrify.iadmin_expense_documents
         order by expense_id, uploaded_at asc
       ),
       doc_count as (
         select expense_id, count(*)::int as c
-        from public.iadmin_expense_documents
+        from countrify.iadmin_expense_documents
         group by expense_id
       )
       select
@@ -857,8 +857,8 @@ export async function listExpensesForGridFromPostgres(input: {
         ap.period_year, ap.period_month,
         fd.doc_id as first_doc_id, fd.file_name as first_doc_name, fd.storage_path as first_doc_path,
         coalesce(dc.c, 0) as doc_count
-      from public.iadmin_expenses e
-      inner join public.iadmin_accounting_periods ap on ap.id = e.accounting_period_id
+      from countrify.iadmin_expenses e
+      inner join countrify.iadmin_accounting_periods ap on ap.id = e.accounting_period_id
       left join first_doc fd on fd.expense_id = e.id
       left join doc_count dc on dc.expense_id = e.id
       where e.managed_property_id = $1
@@ -883,8 +883,8 @@ export async function listRunsForGridFromPostgres(
     `
       select r.id, r.status::text as status,
              ap.period_year, ap.period_month
-      from public.iadmin_liquidation_runs r
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      from countrify.iadmin_liquidation_runs r
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
       where r.managed_property_id = $1
     `,
     [propertyId],
@@ -898,7 +898,7 @@ export async function listActiveUnitsProrataFromPostgres(
   propertyId: string,
 ): Promise<UnitProrataRow[]> {
   const result = await pgQuery<UnitProrataRow>(
-    `select id, prorata_coefficient::text as prorata_coefficient from public.iadmin_units where managed_property_id = $1 and is_active = true`,
+    `select id, prorata_coefficient::text as prorata_coefficient from countrify.iadmin_units where managed_property_id = $1 and is_active = true`,
     [propertyId],
   )
   return result.rows
@@ -922,7 +922,7 @@ export async function countExpensesForPeriodFromPostgres(input: {
       select
         count(*)::int as total,
         count(*) filter (where status in ('pending_review', 'needs_doc'))::int as pending_count
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1 and accounting_period_id = $2
     `,
     [input.managedPropertyId, input.accountingPeriodId],
@@ -935,7 +935,7 @@ export async function getRunIdAndStatusForPeriodFromPostgres(input: {
   accountingPeriodId: string
 }): Promise<{ id: string; status: string } | null> {
   const result = await pgQuery<{ id: string; status: string }>(
-    `select id, status::text as status from public.iadmin_liquidation_runs where managed_property_id = $1 and accounting_period_id = $2 limit 1`,
+    `select id, status::text as status from countrify.iadmin_liquidation_runs where managed_property_id = $1 and accounting_period_id = $2 limit 1`,
     [input.managedPropertyId, input.accountingPeriodId],
   )
   return result.rows[0] ?? null
@@ -946,7 +946,7 @@ export async function countRemindersGeneratedSinceFromPostgres(input: {
   sinceTimestamp: string
 }): Promise<number> {
   const result = await pgQuery<{ c: number }>(
-    `select count(*)::int as c from public.iadmin_reminders where managed_property_id = $1 and generated_at >= $2::timestamptz`,
+    `select count(*)::int as c from countrify.iadmin_reminders where managed_property_id = $1 and generated_at >= $2::timestamptz`,
     [input.managedPropertyId, input.sinceTimestamp],
   )
   return result.rows[0]?.c ?? 0
@@ -957,7 +957,7 @@ export async function countNotificationsSinceForAdminFromPostgres(input: {
   sinceTimestamp: string
 }): Promise<number> {
   const result = await pgQuery<{ c: number }>(
-    `select count(*)::int as c from public.iadmin_notifications where administration_id = $1 and created_at >= $2::timestamptz`,
+    `select count(*)::int as c from countrify.iadmin_notifications where administration_id = $1 and created_at >= $2::timestamptz`,
     [input.administrationId, input.sinceTimestamp],
   )
   return result.rows[0]?.c ?? 0
@@ -988,7 +988,7 @@ export async function getUnitWithAdminAndHolderFromPostgres(input: {
       with chosen_holder as (
         select distinct on (unit_id)
           unit_id, full_name, phone, email, is_active
-        from public.iadmin_unit_holders
+        from countrify.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       )
       select
@@ -998,8 +998,8 @@ export async function getUnitWithAdminAndHolderFromPostgres(input: {
         ch.full_name as holder_full_name,
         ch.phone as holder_phone,
         ch.email as holder_email
-      from public.iadmin_units u
-      inner join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+      from countrify.iadmin_units u
+      inner join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       left join chosen_holder ch on ch.unit_id = u.id
       where u.id = $1 and u.managed_property_id = $2
       limit 1
@@ -1026,8 +1026,8 @@ export async function listAdministrationAccountingPeriodsFromPostgres(
   const result = await pgQuery<{ period_year: number; period_month: number }>(
     `
       select distinct ap.period_year, ap.period_month
-      from public.iadmin_accounting_periods ap
-      inner join public.iadmin_managed_properties mp on mp.id = ap.managed_property_id
+      from countrify.iadmin_accounting_periods ap
+      inner join countrify.iadmin_managed_properties mp on mp.id = ap.managed_property_id
       where mp.administration_id = $1
         and mp.is_active = true
       order by ap.period_year desc, ap.period_month desc
@@ -1047,7 +1047,7 @@ export async function listAllAccountingPeriodsFromPostgres(
   const result = await pgQuery<{ period_year: number; period_month: number; status: string }>(
     `
       select period_year, period_month, status::text as status
-      from public.iadmin_accounting_periods
+      from countrify.iadmin_accounting_periods
       where managed_property_id = $1
       order by period_year desc, period_month desc
     `,
@@ -1064,7 +1064,7 @@ export async function listAccountingPeriodsByYearsFromPostgres(input: {
   const result = await pgQuery<AccountingPeriodWindowRow>(
     `
       select id, period_year, period_month, status::text as status
-      from public.iadmin_accounting_periods
+      from countrify.iadmin_accounting_periods
       where managed_property_id = $1 and period_year = any($2::int[])
     `,
     [input.managedPropertyId, input.years],
@@ -1098,9 +1098,9 @@ export async function listRunsWithUnitItemFromPostgres(input: {
         i.ordinary_amount::text as ordinary_amount,
         i.extraordinary_amount::text as extraordinary_amount,
         i.previous_balance::text as previous_balance
-      from public.iadmin_liquidation_runs r
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
-      left join public.iadmin_liquidation_items i on i.liquidation_run_id = r.id and i.unit_id = $2
+      from countrify.iadmin_liquidation_runs r
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      left join countrify.iadmin_liquidation_items i on i.liquidation_run_id = r.id and i.unit_id = $2
       where r.managed_property_id = $1
     `,
     [input.managedPropertyId, input.unitId],
@@ -1125,7 +1125,7 @@ export async function sumImputedExpensesByPeriodsFromPostgres(input: {
         accounting_period_id,
         coalesce(sum(case when (expense_kind::text = 'extraordinaria') then 0 else amount end), 0)::text as ord_total,
         coalesce(sum(case when (expense_kind::text = 'extraordinaria') then amount else 0 end), 0)::text as ext_total
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1
         and status = 'imputed'
         and accounting_period_id = any($2::uuid[])
@@ -1166,9 +1166,9 @@ export async function listUnitPaymentsInWindowFromPostgres(input: {
         p.is_void, p.notes,
         p.liquidation_run_id, p.liquidation_item_id,
         ap.period_year, ap.period_month
-      from public.iadmin_payments p
-      left join public.iadmin_liquidation_runs r on r.id = p.liquidation_run_id
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      from countrify.iadmin_payments p
+      left join countrify.iadmin_liquidation_runs r on r.id = p.liquidation_run_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
       where p.unit_id = $1 and p.paid_at >= $2::date
       order by p.paid_at desc
     `,
@@ -1211,10 +1211,10 @@ export async function listLiquidationRunSummariesByAdminFromPostgres(input: {
         r.total_units,
         r.generated_at::text as generated_at,
         r.closed_at::text as closed_at
-      from public.iadmin_liquidation_runs r
-      left join public.iadmin_managed_properties mp on mp.id = r.managed_property_id
-      left join public.buildings b on b.id = mp.building_id
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      from countrify.iadmin_liquidation_runs r
+      left join countrify.iadmin_managed_properties mp on mp.id = r.managed_property_id
+      left join countrify.buildings b on b.id = mp.building_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
       where r.administration_id = $1
       order by r.generated_at desc
       limit $2
@@ -1287,14 +1287,14 @@ export async function getLiquidationRunHeaderFromPostgres(
         b.address as building_address,
         ap.period_year,
         ap.period_month
-      from public.iadmin_liquidation_runs r
-      inner join public.iadmin_administrations a on a.id = r.administration_id
-      inner join public.iadmin_managed_properties mp on mp.id = r.managed_property_id
-      inner join public.buildings b on b.id = mp.building_id
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
-      left join public.profiles gp on gp.id = r.generated_by
-      left join public.profiles ip on ip.id = r.issued_by
-      left join public.profiles cp on cp.id = r.closed_by
+      from countrify.iadmin_liquidation_runs r
+      inner join countrify.iadmin_administrations a on a.id = r.administration_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = r.managed_property_id
+      inner join countrify.buildings b on b.id = mp.building_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      left join countrify.profiles gp on gp.id = r.generated_by
+      left join countrify.profiles ip on ip.id = r.issued_by
+      left join countrify.profiles cp on cp.id = r.closed_by
       where r.id = $1
       limit 1
     `,
@@ -1326,7 +1326,7 @@ export async function listLiquidationItemsDetailedFromPostgres(
       with chosen_holder as (
         select distinct on (unit_id)
           unit_id, full_name, holder_kind::text as holder_kind, is_active
-        from public.iadmin_unit_holders
+        from countrify.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       )
       select
@@ -1342,8 +1342,8 @@ export async function listLiquidationItemsDetailedFromPostgres(
         u.kind::text as unit_kind,
         ch.full_name as active_holder_full_name,
         ch.holder_kind as active_holder_kind
-      from public.iadmin_liquidation_items i
-      left join public.iadmin_units u on u.id = i.unit_id
+      from countrify.iadmin_liquidation_items i
+      left join countrify.iadmin_units u on u.id = i.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
       where i.liquidation_run_id = $1
     `,
@@ -1391,9 +1391,9 @@ export async function listLivePaymentsByRunDetailedFromPostgres(
         p.paid_at::text as paid_at, p.method, p.reference, p.receipt_number,
         p.due_label, p.notes, p.is_void,
         p.voided_at::text as voided_at, p.void_reason, p.created_at::text as created_at
-      from public.iadmin_payments p
-      left join public.iadmin_cash_accounts ca on ca.id = p.cash_account_id
-      left join public.iadmin_units u on u.id = p.unit_id
+      from countrify.iadmin_payments p
+      left join countrify.iadmin_cash_accounts ca on ca.id = p.cash_account_id
+      left join countrify.iadmin_units u on u.id = p.unit_id
       where p.liquidation_run_id = $1 and p.is_void = false
       order by p.paid_at desc
     `,
@@ -1424,8 +1424,8 @@ export async function listImputedExpenseLinesByPeriodFromPostgres(
         e.issued_at::text as issued_at, e.expense_kind::text as expense_kind,
         e.document_type, e.document_number,
         p.name as provider_name
-      from public.iadmin_expenses e
-      left join public.iadmin_providers p on p.id = e.provider_id
+      from countrify.iadmin_expenses e
+      left join countrify.iadmin_providers p on p.id = e.provider_id
       where e.accounting_period_id = $1 and e.status = 'imputed'
       order by e.issued_at asc
     `,
@@ -1458,7 +1458,7 @@ export async function listUnitsBasicByPropertyFromPostgres(
       select id, managed_property_id, code, kind::text as kind, floor,
              surface_m2::text as surface_m2, prorata_coefficient::text as prorata_coefficient,
              is_active, created_at::text as created_at
-      from public.iadmin_units
+      from countrify.iadmin_units
       where managed_property_id = $1
       order by code
     `,
@@ -1490,7 +1490,7 @@ export async function listHoldersByUnitsFromPostgres(unitIds: string[]): Promise
              tax_id, email, phone,
              start_date::text as start_date, end_date::text as end_date,
              is_active, created_at::text as created_at
-      from public.iadmin_unit_holders
+      from countrify.iadmin_unit_holders
       where unit_id = any($1::uuid[])
     `,
     [unitIds],
@@ -1532,8 +1532,8 @@ export async function listMembershipsWithProfileByUnitsFromPostgres(
         p.role::text as profile_role,
         p.floor as profile_floor,
         p.unit as profile_unit
-      from public.unit_profile_memberships m
-      left join public.profiles p on p.id = m.profile_id
+      from countrify.unit_profile_memberships m
+      left join countrify.profiles p on p.id = m.profile_id
       where m.unit_id = any($1::uuid[])
     `,
     [unitIds],
@@ -1547,8 +1547,8 @@ export async function getExpensePaymentInfoFromPostgres(
   const result = await pgQuery<ExpensePaymentRow>(
     `
       select m.movement_date::text as movement_date, ca.name as cash_account_name
-      from public.iadmin_bank_movements m
-      left join public.iadmin_cash_accounts ca on ca.id = m.cash_account_id
+      from countrify.iadmin_bank_movements m
+      left join countrify.iadmin_cash_accounts ca on ca.id = m.cash_account_id
       where m.expense_id = $1 and m.movement_kind = 'expense_payment'
       limit 1
     `,
@@ -1611,7 +1611,7 @@ export async function listPaymentsByAdminFromPostgres(input: {
     `
       with chosen_holder as (
         select distinct on (unit_id) unit_id, full_name
-          from public.iadmin_unit_holders
+          from countrify.iadmin_unit_holders
          order by unit_id, is_active desc, created_at asc
       )
       select
@@ -1646,16 +1646,16 @@ export async function listPaymentsByAdminFromPostgres(input: {
         p.created_at::text as created_at,
         p.created_by,
         prc.full_name as created_by_name
-      from public.iadmin_payments p
-      left join public.iadmin_units u on u.id = p.unit_id
+      from countrify.iadmin_payments p
+      left join countrify.iadmin_units u on u.id = p.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
-      left join public.iadmin_cash_accounts ca on ca.id = p.cash_account_id
-      left join public.iadmin_managed_properties mp on mp.id = p.managed_property_id
-      left join public.buildings b on b.id = mp.building_id
-      left join public.iadmin_liquidation_runs r on r.id = p.liquidation_run_id
-      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
-      left join public.profiles prv on prv.id = p.voided_by
-      left join public.profiles prc on prc.id = p.created_by
+      left join countrify.iadmin_cash_accounts ca on ca.id = p.cash_account_id
+      left join countrify.iadmin_managed_properties mp on mp.id = p.managed_property_id
+      left join countrify.buildings b on b.id = mp.building_id
+      left join countrify.iadmin_liquidation_runs r on r.id = p.liquidation_run_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      left join countrify.profiles prv on prv.id = p.voided_by
+      left join countrify.profiles prc on prc.id = p.created_by
       where p.administration_id = $1
         and ($2::int is null or ap.period_year = $2)
         and ($3::int is null or ap.period_month = $3)
@@ -1707,7 +1707,7 @@ export async function listOpenLiquidationItemsByAdminFromPostgres(input: {
     `
       with chosen_holder as (
         select distinct on (unit_id) unit_id, full_name
-          from public.iadmin_unit_holders
+          from countrify.iadmin_unit_holders
          order by unit_id, is_active desc, created_at asc
       ),
       ledger_by_item as (
@@ -1720,7 +1720,7 @@ export async function listOpenLiquidationItemsByAdminFromPostgres(input: {
           sum(case when entry_type in ('saldo_anterior_migrado', 'recargo_mora', 'ajuste_manual') then amount else 0 end) as previous_balance,
           sum(amount) as subtotal,
           sum(balance_open) as balance_remaining
-        from public.iadmin_unit_ledger_entries
+        from countrify.iadmin_unit_ledger_entries
         where administration_id = $1
           and liquidation_item_id is not null
           and entry_type <> 'pago'
@@ -1747,12 +1747,12 @@ export async function listOpenLiquidationItemsByAdminFromPostgres(input: {
         greatest(0, coalesce(lbi.subtotal, 0) - coalesce(lbi.balance_remaining, 0))::text as paid,
         coalesce(lbi.balance_remaining, 0)::text as balance_remaining,
         r.due_dates as due_dates
-      from public.iadmin_liquidation_items li
-      inner join public.iadmin_liquidation_runs r on r.id = li.liquidation_run_id
-      inner join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
-      inner join public.iadmin_managed_properties mp on mp.id = r.managed_property_id
-      inner join public.buildings b on b.id = mp.building_id
-      inner join public.iadmin_units u on u.id = li.unit_id
+      from countrify.iadmin_liquidation_items li
+      inner join countrify.iadmin_liquidation_runs r on r.id = li.liquidation_run_id
+      inner join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = r.managed_property_id
+      inner join countrify.buildings b on b.id = mp.building_id
+      inner join countrify.iadmin_units u on u.id = li.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
       left join ledger_by_item lbi on lbi.liquidation_item_id = li.id
       where r.administration_id = $1
@@ -1782,7 +1782,7 @@ export async function computeCollectionsKpisFromPostgres(input: {
       ),
       live_payments as (
         select p.*
-          from public.iadmin_payments p
+          from countrify.iadmin_payments p
          where p.administration_id = $1
            and p.is_void = false
       ),
@@ -1797,7 +1797,7 @@ export async function computeCollectionsKpisFromPostgres(input: {
         select
           due_date,
           balance_open
-        from public.iadmin_unit_ledger_entries
+        from countrify.iadmin_unit_ledger_entries
         where administration_id = $1
           and status in ('open', 'partially_paid')
           and entry_type <> 'pago'
@@ -1853,7 +1853,7 @@ export async function listMorososByAdminFromPostgres(input: {
       with chosen_holder as (
         select distinct on (h.unit_id)
           h.unit_id, h.full_name, h.email, h.phone
-        from public.iadmin_unit_holders h
+        from countrify.iadmin_unit_holders h
         order by h.unit_id, h.is_active desc, h.created_at asc
       ),
       open_entries as (
@@ -1863,7 +1863,7 @@ export async function listMorososByAdminFromPostgres(input: {
           le.managed_property_id,
           le.balance_open as balance,
           le.due_date as first_due_date
-        from public.iadmin_unit_ledger_entries le
+        from countrify.iadmin_unit_ledger_entries le
         where le.administration_id = $1
           and le.status in ('open', 'partially_paid')
           and le.entry_type <> 'pago'
@@ -1882,7 +1882,7 @@ export async function listMorososByAdminFromPostgres(input: {
       ),
       last_pay as (
         select unit_id, max(paid_at) as last_paid_at
-          from public.iadmin_payments
+          from countrify.iadmin_payments
          where administration_id = $1 and is_void = false
          group by unit_id
       ),
@@ -1921,10 +1921,10 @@ export async function listMorososByAdminFromPostgres(input: {
         a.oldest_due_date::text as oldest_due_date,
         lp.last_paid_at::text as last_payment_at
       from agg a
-      inner join public.iadmin_units u on u.id = a.unit_id
+      inner join countrify.iadmin_units u on u.id = a.unit_id
       left join chosen_holder ch on ch.unit_id = a.unit_id
-      inner join public.iadmin_managed_properties mp on mp.id = a.managed_property_id
-      inner join public.buildings b on b.id = mp.building_id
+      inner join countrify.iadmin_managed_properties mp on mp.id = a.managed_property_id
+      inner join countrify.buildings b on b.id = mp.building_id
       left join last_pay lp on lp.unit_id = a.unit_id
       order by a.total_balance desc
     `,
@@ -1991,8 +1991,8 @@ export async function listUnitLedgerEntriesFromPostgres(input: {
         le.voided_by,
         le.voided_at::text as voided_at,
         le.void_reason
-      from public.iadmin_unit_ledger_entries le
-      left join public.iadmin_accounting_periods ap on ap.id = le.accounting_period_id
+      from countrify.iadmin_unit_ledger_entries le
+      left join countrify.iadmin_accounting_periods ap on ap.id = le.accounting_period_id
       where le.unit_id = $1
         and le.managed_property_id = $2
       order by coalesce(ap.period_year, 0) asc, coalesce(ap.period_month, 0) asc, le.created_at asc
@@ -2020,10 +2020,10 @@ export async function listUnitAppliedPaymentsByChargePeriodFromPostgres(input: {
         ap.period_year,
         ap.period_month,
         app.amount::text as amount
-      from public.iadmin_payment_applications app
-      inner join public.iadmin_unit_ledger_entries le on le.id = app.applied_to_entry_id
-      left join public.iadmin_accounting_periods ap on ap.id = le.accounting_period_id
-      inner join public.iadmin_payments p on p.id = app.payment_id
+      from countrify.iadmin_payment_applications app
+      inner join countrify.iadmin_unit_ledger_entries le on le.id = app.applied_to_entry_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = le.accounting_period_id
+      inner join countrify.iadmin_payments p on p.id = app.payment_id
       where app.unit_id = $1
         and app.voided_at is null
         and p.is_void = false
@@ -2067,10 +2067,10 @@ export async function listLinkableProfilesByBuildingFromPostgres(
         p.role,
         p.phone,
         coalesce(m.active_count, 0)::int as active_memberships_count
-      from public.profiles p
+      from countrify.profiles p
       left join (
         select profile_id, count(*) as active_count
-        from public.unit_profile_memberships
+        from countrify.unit_profile_memberships
         where building_id = $1 and active = true
         group by profile_id
       ) m on m.profile_id = p.id

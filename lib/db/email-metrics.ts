@@ -1,6 +1,6 @@
 import { pgQuery } from './postgres'
 
-// Métricas de salud del canal email. Lee de public.email_events (alimentado
+// Métricas de salud del canal email. Lee de countrify.email_events (alimentado
 // por lib/email/send.ts + app/api/email/ses-webhook). Es source-of-truth
 // local: SES también publica Reputation.BounceRate en CloudWatch, pero acá
 // vemos por template + qué addresses están reventando.
@@ -46,7 +46,7 @@ export async function getEmailHealthSummary(window: EmailHealthWindow): Promise<
         count(*) filter (where status = 'bounced')::text as bounced,
         count(*) filter (where status = 'complained')::text as complained,
         count(*) filter (where status = 'failed')::text as failed
-       from public.email_events
+       from countrify.email_events
       where sent_at >= now() - $1::interval`,
     [interval],
   )
@@ -98,8 +98,8 @@ export async function listTopBouncingAddresses(limit = 20): Promise<TopBouncingA
         max(e.bounced_at) as last_bounced_at,
         (array_agg(e.metadata ->> 'bounce_type' order by e.bounced_at desc nulls last))[1] as last_bounce_type,
         bool_or(coalesce(p.email_blocked, false)) as email_blocked
-       from public.email_events e
-       left join public.profiles p on lower(p.email) = lower(e.to_email)
+       from countrify.email_events e
+       left join countrify.profiles p on lower(p.email) = lower(e.to_email)
       where e.status = 'bounced'
         and e.sent_at >= now() - interval '30 days'
       group by e.to_email
@@ -138,7 +138,7 @@ export async function listTemplateHealth(window: EmailHealthWindow): Promise<Tem
         count(*)::text as total,
         count(*) filter (where status = 'bounced')::text as bounced,
         count(*) filter (where status = 'complained')::text as complained
-       from public.email_events
+       from countrify.email_events
       where sent_at >= now() - $1::interval
       group by template_key
       order by count(*) desc`,

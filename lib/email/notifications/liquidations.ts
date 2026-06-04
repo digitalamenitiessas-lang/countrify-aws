@@ -25,10 +25,10 @@ async function getRunContext(runId: string): Promise<RunContext | null> {
        mp.display_name as property_display_name,
        ap.period_year,
        ap.period_month
-     from public.iadmin_liquidation_runs lr
-     join public.iadmin_accounting_periods ap on ap.id = lr.accounting_period_id
-     join public.iadmin_managed_properties mp on mp.id = lr.managed_property_id
-     join public.buildings b on b.id = mp.building_id
+     from countrify.iadmin_liquidation_runs lr
+     join countrify.iadmin_accounting_periods ap on ap.id = lr.accounting_period_id
+     join countrify.iadmin_managed_properties mp on mp.id = lr.managed_property_id
+     join countrify.buildings b on b.id = mp.building_id
      where lr.id = $1
      limit 1`,
     [runId],
@@ -72,9 +72,9 @@ export async function notifyLiquidationIssued(runId: string): Promise<void> {
          coalesce(li.extraordinary_amount, 0)::text as extraordinary_amount,
          coalesce(li.previous_balance, 0)::text as previous_balance,
          t.token
-       from public.iadmin_liquidation_items li
-       join public.iadmin_units u on u.id = li.unit_id
-       left join public.iadmin_item_share_tokens t
+       from countrify.iadmin_liquidation_items li
+       join countrify.iadmin_units u on u.id = li.unit_id
+       left join countrify.iadmin_item_share_tokens t
          on t.liquidation_item_id = li.id and t.revoked_at is null
        where li.liquidation_run_id = $1`,
       [runId],
@@ -89,8 +89,8 @@ export async function notifyLiquidationIssued(runId: string): Promise<void> {
     const ownersRes = await pgQuery<OwnerRow>(
       `select m.unit_id, m.profile_id, p.email, p.full_name,
               m.relationship_type::text as relationship_type
-         from public.unit_profile_memberships m
-         join public.profiles p on p.id = m.profile_id
+         from countrify.unit_profile_memberships m
+         join countrify.profiles p on p.id = m.profile_id
         where m.unit_id = any($1::uuid[])
           and m.relationship_type = 'vecino_principal'
           and m.active = true`,
@@ -116,7 +116,7 @@ export async function notifyLiquidationIssued(runId: string): Promise<void> {
       alias: string | null
     }>(
       `select name, bank_name, account_number, cbu, alias
-         from public.iadmin_cash_accounts
+         from countrify.iadmin_cash_accounts
         where managed_property_id = $1 and is_active = true
         order by created_at desc
         limit 1`,
@@ -195,8 +195,8 @@ interface BuildingAdminRow {
 async function getBuildingAdmins(buildingId: string): Promise<BuildingAdminRow[]> {
   const res = await pgQuery<BuildingAdminRow>(
     `select p.id as profile_id, p.email, p.full_name
-       from public.building_admin_assignments baa
-       join public.profiles p on p.id = baa.profile_id
+       from countrify.building_admin_assignments baa
+       join countrify.profiles p on p.id = baa.profile_id
       where baa.building_id = $1
         and p.role = 'consorcio_admin'`,
     [buildingId],
@@ -219,7 +219,7 @@ export async function notifyLiquidationClosed(
     if (admins.length === 0) return
 
     const changerRes = await pgQuery<{ full_name: string }>(
-      `select full_name from public.profiles where id = $1 limit 1`,
+      `select full_name from countrify.profiles where id = $1 limit 1`,
       [closedByProfileId],
     )
     const closedByName = changerRes.rows[0]?.full_name ?? 'El administrador'

@@ -23,9 +23,9 @@ export async function submitPaymentClaim(input: z.input<typeof submitSchema>): P
   // El vecino principal es el responsable de pago de la unidad.
   const membership = await pgQuery<{ administration_id: string; managed_property_id: string }>(
     `select mp.administration_id, mp.id as managed_property_id
-       from public.unit_profile_memberships m
-       join public.iadmin_units u on u.id = m.unit_id
-       join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+       from countrify.unit_profile_memberships m
+       join countrify.iadmin_units u on u.id = m.unit_id
+       join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       where m.unit_id = $1
         and m.profile_id = $2
         and m.relationship_type = 'vecino_principal'
@@ -39,7 +39,7 @@ export async function submitPaymentClaim(input: z.input<typeof submitSchema>): P
   }
 
   const result = await pgQuery<{ id: string }>(
-    `insert into public.iadmin_payment_claims (
+    `insert into countrify.iadmin_payment_claims (
        administration_id, managed_property_id, unit_id, liquidation_item_id,
        reporter_profile_id, amount, paid_at_claimed, method, reference, notes,
        document_object_key, status

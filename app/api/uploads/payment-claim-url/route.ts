@@ -30,9 +30,9 @@ export async function POST(req: NextRequest) {
   // comprobantes (es el responsable del pago).
   const membership = await pgQuery<{ administration_id: string }>(
     `select mp.administration_id
-       from public.unit_profile_memberships m
-       join public.iadmin_units u on u.id = m.unit_id
-       join public.iadmin_managed_properties mp on mp.id = u.managed_property_id
+       from countrify.unit_profile_memberships m
+       join countrify.iadmin_units u on u.id = m.unit_id
+       join countrify.iadmin_managed_properties mp on mp.id = u.managed_property_id
       where m.unit_id = $1
         and m.profile_id = $2
         and m.relationship_type = 'vecino_principal'

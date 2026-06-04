@@ -33,7 +33,7 @@ export async function POST(request: Request) {
 
   const started = Date.now()
   const adminsRes = await pgQuery<{ id: string }>(
-    `select id from public.iadmin_administrations where is_active = true`,
+    `select id from countrify.iadmin_administrations where is_active = true`,
   )
 
   const today = new Date().toISOString().slice(0, 10)

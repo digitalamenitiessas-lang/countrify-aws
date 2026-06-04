@@ -43,9 +43,9 @@ async function getCaseContext(caseId: string): Promise<CaseContext | null> {
        b.name as building_name,
        c.author_profile_id,
        p.full_name as author_full_name
-     from public.complaint_cases c
-     join public.buildings b on b.id = c.building_id
-     join public.profiles p on p.id = c.author_profile_id
+     from countrify.complaint_cases c
+     join countrify.buildings b on b.id = c.building_id
+     join countrify.profiles p on p.id = c.author_profile_id
      where c.id = $1
      limit 1`,
     [caseId],
@@ -66,8 +66,8 @@ interface BuildingAdmin {
 async function getBuildingAdmins(buildingId: string): Promise<BuildingAdmin[]> {
   const res = await pgQuery<BuildingAdmin>(
     `select p.id as profile_id, p.email, p.full_name, p.role::text as role
-       from public.building_admin_assignments baa
-       join public.profiles p on p.id = baa.profile_id
+       from countrify.building_admin_assignments baa
+       join countrify.profiles p on p.id = baa.profile_id
       where baa.building_id = $1
         and p.role = 'consorcio_admin'`,
     [buildingId],
@@ -134,8 +134,8 @@ export async function notifyComplaintMessage(messageId: string): Promise<void> {
               m.message,
               m.message_type::text as message_type,
               m.created_at::text as created_at
-         from public.complaint_case_messages m
-         left join public.profiles p on p.id = m.author_profile_id
+         from countrify.complaint_case_messages m
+         left join countrify.profiles p on p.id = m.author_profile_id
         where m.id = $1
         limit 1`,
       [messageId],
@@ -155,7 +155,7 @@ export async function notifyComplaintMessage(messageId: string): Promise<void> {
     // Autor del expediente
     if (msg.author_profile_id !== ctx.author_profile_id) {
       const authorRes = await pgQuery<{ email: string; full_name: string; role: string }>(
-        `select email, full_name, role::text as role from public.profiles where id = $1 limit 1`,
+        `select email, full_name, role::text as role from countrify.profiles where id = $1 limit 1`,
         [ctx.author_profile_id],
       )
       const a = authorRes.rows[0]
@@ -191,8 +191,8 @@ export async function notifyComplaintMessage(messageId: string): Promise<void> {
               p.email,
               p.full_name,
               p.role::text as role
-         from public.complaint_case_message_mentions m
-         join public.profiles p on p.id = m.mentioned_profile_id
+         from countrify.complaint_case_message_mentions m
+         join countrify.profiles p on p.id = m.mentioned_profile_id
         where m.message_id = $1`,
       [messageId],
     )
@@ -263,14 +263,14 @@ export async function notifyComplaintStatusChanged(
     if (ctx.author_profile_id === changedByProfileId) return
 
     const authorRes = await pgQuery<{ email: string; full_name: string; role: string }>(
-      `select email, full_name, role::text as role from public.profiles where id = $1 limit 1`,
+      `select email, full_name, role::text as role from countrify.profiles where id = $1 limit 1`,
       [ctx.author_profile_id],
     )
     const author = authorRes.rows[0]
     if (!author) return
 
     const changerRes = await pgQuery<{ full_name: string }>(
-      `select full_name from public.profiles where id = $1 limit 1`,
+      `select full_name from countrify.profiles where id = $1 limit 1`,
       [changedByProfileId],
     )
     const changedByName = changerRes.rows[0]?.full_name ?? 'El administrador'

@@ -45,12 +45,12 @@ async function getPendingClaims(propertyId: string): Promise<ClaimRowView[]> {
         ap.period_year,
         ap.period_month,
         c.created_at::text as created_at
-      from public.iadmin_payment_claims c
-      join public.iadmin_units u on u.id = c.unit_id
-      join public.profiles p on p.id = c.reporter_profile_id
-      left join public.iadmin_liquidation_items li on li.id = c.liquidation_item_id
-      left join public.iadmin_liquidation_runs lr on lr.id = li.liquidation_run_id
-      left join public.iadmin_accounting_periods ap on ap.id = lr.accounting_period_id
+      from countrify.iadmin_payment_claims c
+      join countrify.iadmin_units u on u.id = c.unit_id
+      join countrify.profiles p on p.id = c.reporter_profile_id
+      left join countrify.iadmin_liquidation_items li on li.id = c.liquidation_item_id
+      left join countrify.iadmin_liquidation_runs lr on lr.id = li.liquidation_run_id
+      left join countrify.iadmin_accounting_periods ap on ap.id = lr.accounting_period_id
       where c.managed_property_id = $1
         and c.status = 'pending'
       order by c.created_at desc

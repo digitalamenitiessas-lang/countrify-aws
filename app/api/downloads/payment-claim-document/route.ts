@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     reporter_profile_id: string
   }>(
     `select administration_id, document_object_key, reporter_profile_id
-       from public.iadmin_payment_claims
+       from countrify.iadmin_payment_claims
       where id = $1
       limit 1`,
     [claimId],

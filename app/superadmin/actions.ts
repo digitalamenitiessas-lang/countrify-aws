@@ -371,7 +371,7 @@ async function findOrCreatePlatformProfile(input: {
   const normalizedEmail = input.email.toLowerCase()
   const isBusiness = input.role === 'negocio_admin'
 
-  // Negocios viven en public.profiles (compartido con Citify) y en el
+  // Negocios viven en countrify.profiles (compartido con Citify) y en el
   // business pool de Cognito. El resto en countrify.profiles + pool primary.
   const existing = isBusiness
     ? await findBusinessProfileByEmail(normalizedEmail)

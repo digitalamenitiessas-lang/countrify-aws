@@ -83,7 +83,7 @@ export async function clearPasswordMustChange(profileId: string): Promise<void> 
     [profileId],
   )
   await pgQuery(
-    `update public.profiles set password_must_change = false where id = $1`,
+    `update countrify.profiles set password_must_change = false where id = $1`,
     [profileId],
   )
 }
@@ -94,19 +94,19 @@ export async function markPasswordMustChange(profileId: string): Promise<void> {
     [profileId],
   )
   await pgQuery(
-    `update public.profiles set password_must_change = true where id = $1`,
+    `update countrify.profiles set password_must_change = true where id = $1`,
     [profileId],
   )
 }
 
 // Email notifications viven en ambos schemas (countrify.profiles para
-// vecinos/admins, public.profiles para business). Estos helpers branchean
+// vecinos/admins, countrify.profiles para business). Estos helpers branchean
 // segun donde este el profile.
 export async function getEmailNotificationsPrefs(
   profileId: string,
   source: 'primary' | 'business',
 ): Promise<Record<string, boolean>> {
-  const table = source === 'business' ? 'public.profiles' : 'countrify.profiles'
+  const table = source === 'business' ? 'countrify.profiles' : 'countrify.profiles'
   const res = await pgQuery<{ email_notifications: Record<string, boolean> }>(
     `select email_notifications from ${table} where id = $1 limit 1`,
     [profileId],
@@ -119,7 +119,7 @@ export async function setEmailNotificationsPrefs(
   source: 'primary' | 'business',
   prefs: Record<string, boolean>,
 ): Promise<void> {
-  const table = source === 'business' ? 'public.profiles' : 'countrify.profiles'
+  const table = source === 'business' ? 'countrify.profiles' : 'countrify.profiles'
   await pgQuery(
     `update ${table} set email_notifications = $2::jsonb where id = $1`,
     [profileId, JSON.stringify(prefs)],
@@ -127,7 +127,7 @@ export async function setEmailNotificationsPrefs(
 }
 
 // Busca un profile por email en ambos schemas. countrify.profiles (vecinos/
-// admins) tiene prioridad; si no aparece ahi, prueba public.profiles
+// admins) tiene prioridad; si no aparece ahi, prueba countrify.profiles
 // (negocios compartidos con Citify). Devuelve tambien el "source" para que
 // el caller sepa contra que pool de Cognito setear/leer la pwd.
 export type ProfileSource = 'primary' | 'business'
@@ -163,7 +163,7 @@ export async function findProfileById(id: string) {
 }
 
 // ----------------------------------------------------------------------------
-// Business users live in Citify's public.profiles (shared via public.businesses).
+// Business users live in Citify's countrify.profiles (shared via public.businesses).
 // We accept them in Countrify only when role = 'negocio_admin' and they have a
 // linked business. Anything else stays out.
 // ----------------------------------------------------------------------------
@@ -172,14 +172,14 @@ const BUSINESS_PROFILE_SELECT = `
   select id, email, full_name, role, avatar_text, business_id,
          null::uuid as building_id, null::text as floor, null::text as unit,
          phone, password_must_change, created_at
-  from public.profiles
+  from countrify.profiles
   where role = 'negocio_admin'
     and business_id is not null
 `
 
-// Upserta un profile de negocio en public.profiles (schema compartido con
+// Upserta un profile de negocio en countrify.profiles (schema compartido con
 // Citify). Lo usa el super_admin cuando crea un business + admin: el FK
-// public.businesses.owner_profile_id apunta a public.profiles(id), asi que
+// public.businesses.owner_profile_id apunta a countrify.profiles(id), asi que
 // el row debe vivir ahi (no en countrify.profiles).
 export async function upsertBusinessProfile(input: {
   id: string
@@ -192,7 +192,7 @@ export async function upsertBusinessProfile(input: {
 }): Promise<Profile> {
   const result = await pgQuery(
     `
-      insert into public.profiles (id, email, full_name, avatar_text, role, phone, business_id, password_must_change)
+      insert into countrify.profiles (id, email, full_name, avatar_text, role, phone, business_id, password_must_change)
       values ($1, lower($2), $3, $4, 'negocio_admin', $5, $6, coalesce($7, false))
       on conflict (id) do update set
         email = excluded.email,

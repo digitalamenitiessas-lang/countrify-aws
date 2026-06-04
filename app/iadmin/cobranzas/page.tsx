@@ -124,7 +124,7 @@ export default async function CobranzasPage({
     getIAdminCashAccounts(currentPropertyId),
     pgQuery<{ count: string }>(
       `select count(*)::text as count
-         from public.iadmin_payment_claims
+         from countrify.iadmin_payment_claims
         where managed_property_id = $1 and status = 'pending'`,
       [currentPropertyId],
     ).then((r) => Number(r.rows[0]?.count ?? 0)),

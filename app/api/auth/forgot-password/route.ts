@@ -54,13 +54,13 @@ export async function POST(request: NextRequest) {
   // Invalidamos tokens previos no usados del mismo profile para que solo
   // el ultimo sirva.
   await pgQuery(
-    `update public.password_reset_tokens
+    `update countrify.password_reset_tokens
         set used_at = now()
       where profile_id = $1 and used_at is null and expires_at > now()`,
     [profile.id],
   )
   await pgQuery(
-    `insert into public.password_reset_tokens
+    `insert into countrify.password_reset_tokens
        (profile_id, token_hash, requested_ip, user_agent, expires_at)
      values ($1, $2, $3::inet, $4, $5)`,
     [profile.id, hash, ip, userAgent, expiresAt.toISOString()],

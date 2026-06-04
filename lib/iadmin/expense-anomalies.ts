@@ -42,7 +42,7 @@ export async function detectExpenseAnomalies(input: AnomalyCheckInput): Promise<
   let providerId = input.providerId ?? null
   if (!providerId && input.providerName) {
     const prov = await pgQuery<{ id: string }>(
-      `select id from public.iadmin_providers where lower(name) = lower($1) limit 1`,
+      `select id from countrify.iadmin_providers where lower(name) = lower($1) limit 1`,
       [input.providerName.trim()],
     )
     providerId = prov.rows[0]?.id ?? null
@@ -63,7 +63,7 @@ export async function detectExpenseAnomalies(input: AnomalyCheckInput): Promise<
   const history = await pgQuery<{ id: string; amount: string; issued_at: string | null }>(
     `
       select id, amount::text as amount, issued_at::text as issued_at
-      from public.iadmin_expenses
+      from countrify.iadmin_expenses
       where managed_property_id = $1
         and provider_id = $2
         and status <> 'rejected'

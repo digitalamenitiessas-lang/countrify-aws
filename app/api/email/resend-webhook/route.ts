@@ -102,7 +102,7 @@ async function handleBounce(e: ResendEvent) {
 
   if (messageId) {
     await pgQuery(
-      `update public.email_events
+      `update countrify.email_events
           set status = 'bounced',
               bounced_at = now(),
               metadata = coalesce(metadata, '{}'::jsonb) || $2::jsonb
@@ -122,7 +122,7 @@ async function handleBounce(e: ResendEvent) {
   if (isHard) {
     for (const addr of e.data.to ?? []) {
       await pgQuery(
-        `update public.profiles
+        `update countrify.profiles
             set email_blocked = true,
                 email_blocked_reason = $2,
                 email_blocked_at = coalesce(email_blocked_at, now())
@@ -138,7 +138,7 @@ async function handleComplaint(e: ResendEvent) {
 
   if (messageId) {
     await pgQuery(
-      `update public.email_events
+      `update countrify.email_events
           set status = 'complained',
               complained_at = now(),
               metadata = coalesce(metadata, '{}'::jsonb) || $2::jsonb
@@ -150,7 +150,7 @@ async function handleComplaint(e: ResendEvent) {
   // Quejas SIEMPRE bloquean (decision del usuario).
   for (const addr of e.data.to ?? []) {
     await pgQuery(
-      `update public.profiles
+      `update countrify.profiles
           set email_blocked = true,
               email_blocked_reason = $2,
               email_blocked_at = coalesce(email_blocked_at, now())
@@ -163,7 +163,7 @@ async function handleComplaint(e: ResendEvent) {
 async function handleDelivery(e: ResendEvent) {
   if (!e.data.email_id) return
   await pgQuery(
-    `update public.email_events
+    `update countrify.email_events
         set status = case when status = 'sent' then 'delivered' else status end,
             delivered_at = now()
       where ses_message_id = $1`,

@@ -134,7 +134,7 @@ async function assertAdminOwnsBuilding(buildingId: string): Promise<{
   // administración del usuario logueado. Confirmamos eso + capability.
   const res = await pgQuery<{ administration_id: string }>(
     `select mp.administration_id
-       from public.iadmin_managed_properties mp
+       from countrify.iadmin_managed_properties mp
       where mp.building_id = $1
       limit 1`,
     [buildingId],
