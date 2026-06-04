@@ -64,7 +64,7 @@ export function PortfolioOverview({ portfolio, overview }: Props) {
           />
           <BigStat
             icon={AlertTriangle}
-            label="Deuda de residentes"
+            label="Deuda de vecinos"
             value={<Money amount={totals.totalOverdue} minimumFractionDigits={0} maximumFractionDigits={0} />}
             tone={totals.totalOverdue > 0 ? 'warning' : undefined}
             href="/iadmin/cobranzas/reportes"
@@ -174,7 +174,7 @@ function PropertyCard({ row }: { row: IAdminPortfolioPropertyRow }) {
             </dd>
           </div>
           <div>
-            <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Deuda residentes</dt>
+            <dt className="text-[10px] uppercase tracking-wider text-muted-foreground">Deuda vecinos</dt>
             <dd
               className={`tabular-nums font-medium ${row.overdueAmount > 0 ? 'text-rose-700' : 'text-muted-foreground'}`}
             >

@@ -1,9 +1,7 @@
 import Link from 'next/link'
-import { AlertTriangle, ArrowRight, Banknote, Clock, Receipt, TrendingDown, TrendingUp, Wallet } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Banknote, Clock, Receipt, TrendingDown, TrendingUp } from 'lucide-react'
 import { Money } from '@/components/admin-backoffice/shared/money'
 import type {
-  IAdminAccountPayable,
-  IAdminDashboardCashSnapshot,
   IAdminOverdueBucket,
   IAdminPeriodCollections,
 } from '@/lib/types'
@@ -60,110 +58,7 @@ function PlaceholderBanner({ text }: { text: string }) {
 }
 
 // ----------------------------------------------------------------------------
-// 1. Balances widget
-// ----------------------------------------------------------------------------
-
-export function BalancesWidget({
-  balances,
-  totalBalance,
-}: {
-  balances: IAdminDashboardCashSnapshot[]
-  totalBalance: number
-}) {
-  return (
-    <Widget
-      title="Saldos"
-      subtitle="Dinero disponible del consorcio por cuenta"
-      variant="dark"
-      action={
-        <div className="flex items-center gap-1 rounded-full bg-slate-800 px-3 py-1 text-xs">
-          <Wallet className="w-3 h-3" />
-          {balances.length} cuenta{balances.length === 1 ? '' : 's'}
-        </div>
-      }
-    >
-      {balances.some((b) => b.placeholder) ? (
-        <div className="mx-5 my-3 rounded-lg bg-slate-800 border border-slate-700 px-3 py-2 text-xs text-slate-400">
-          Saldos aproximados desde gastos imputados. Agregá cuentas bancarias para el saldo real.
-        </div>
-      ) : null}
-      <ul className="divide-y divide-slate-800">
-        {balances.map((b) => (
-          <li key={b.label} className="flex items-center justify-between px-5 py-3 text-sm">
-            <span className="text-slate-300">{b.label}</span>
-            <span className={`font-medium tabular-nums ${b.amount < 0 ? 'text-rose-300' : 'text-slate-100'}`}>
-              <Money amount={b.amount} minimumFractionDigits={0} maximumFractionDigits={0} />
-            </span>
-          </li>
-        ))}
-        <li className="flex items-center justify-between px-5 py-3 text-sm bg-slate-950/40">
-          <span className="font-semibold">Total</span>
-          <span className={`font-serif text-xl font-bold tabular-nums ${totalBalance < 0 ? 'text-rose-300' : 'text-slate-100'}`}>
-            <Money amount={totalBalance} minimumFractionDigits={0} maximumFractionDigits={0} />
-          </span>
-        </li>
-      </ul>
-    </Widget>
-  )
-}
-
-// ----------------------------------------------------------------------------
-// 2. Accounts payable widget (pendiente de pago a proveedores)
-// ----------------------------------------------------------------------------
-
-export function AccountsPayableWidget({
-  items,
-  totalPayable,
-}: {
-  items: IAdminAccountPayable[]
-  totalPayable: number
-}) {
-  return (
-    <Widget
-      title="Pendiente de pago"
-      subtitle="Gastos aprobados, aun no imputados al periodo"
-      variant="dark"
-      action={
-        <div className="flex items-center gap-1 rounded-full bg-slate-800 px-3 py-1 text-xs">
-          <Receipt className="w-3 h-3" />
-          {items.length} proveedor{items.length === 1 ? '' : 'es'}
-        </div>
-      }
-    >
-      {items.length === 0 ? (
-        <div className="px-5 py-8 text-center text-sm text-slate-400">
-          Sin pagos pendientes a proveedores.
-        </div>
-      ) : (
-        <ul className="divide-y divide-slate-800">
-          {items.slice(0, 6).map((p) => (
-            <li key={p.providerId ?? p.providerName} className="flex items-center justify-between px-5 py-3 text-sm">
-              <div className="min-w-0">
-                <div className="text-slate-100 truncate">{p.providerName}</div>
-                <div className="text-[10px] text-slate-400">
-                  {p.expensesCount} gasto{p.expensesCount === 1 ? '' : 's'}
-                  {p.oldestDate ? ` · desde ${p.oldestDate}` : ''}
-                </div>
-              </div>
-              <span className="font-medium tabular-nums text-slate-100 shrink-0">
-                <Money amount={p.amount} minimumFractionDigits={0} maximumFractionDigits={0} />
-              </span>
-            </li>
-          ))}
-          <li className="flex items-center justify-between px-5 py-3 text-sm bg-slate-950/40">
-            <span className="font-semibold">Total</span>
-            <span className="font-serif text-xl font-bold tabular-nums">
-              <Money amount={totalPayable} minimumFractionDigits={0} maximumFractionDigits={0} />
-            </span>
-          </li>
-        </ul>
-      )}
-    </Widget>
-  )
-}
-
-// ----------------------------------------------------------------------------
-// 3. Period collections widget
+// Period collections widget
 // ----------------------------------------------------------------------------
 
 export function PeriodCollectionsWidget({ data }: { data: IAdminPeriodCollections }) {
@@ -240,7 +135,7 @@ function KpiRow({
 }
 
 // ----------------------------------------------------------------------------
-// 4. Overdue (deudas residentes)
+// 4. Overdue (deudas vecinos)
 // ----------------------------------------------------------------------------
 
 export function OverdueWidget({
@@ -254,7 +149,7 @@ export function OverdueWidget({
 }) {
   return (
     <Widget
-      title="Deudas de residentes"
+      title="Deudas de vecinos"
       subtitle="Liquidaciones emitidas sin cobrar (aproximado)"
       action={
         <div className="flex items-center gap-1 rounded-full bg-rose-100 border border-rose-200 px-3 py-1 text-xs text-rose-800">
@@ -305,18 +200,22 @@ export function DashboardQuickStats({
   activeUnits,
   pendingExpenses,
   pendingDocuments,
-  totalBalance,
+  collectionRatePct,
 }: {
   activeUnits: number
   pendingExpenses: number
   pendingDocuments: number
-  totalBalance: number
+  collectionRatePct: number | null
 }) {
   const stats = [
     { label: 'Unidades activas', value: activeUnits.toString(), icon: Banknote },
     { label: 'Gastos a revisar', value: pendingExpenses.toString(), icon: Receipt },
     { label: 'Docs por validar', value: pendingDocuments.toString(), icon: AlertTriangle },
-    { label: 'Saldo total', value: <Money amount={totalBalance} minimumFractionDigits={0} maximumFractionDigits={0} />, icon: Wallet },
+    {
+      label: 'Cobranza del mes',
+      value: collectionRatePct === null ? '—' : `${collectionRatePct}%`,
+      icon: TrendingUp,
+    },
   ]
   return (
     <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">

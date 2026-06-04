@@ -87,7 +87,7 @@ export function MesaDropZone({ onFile, disabled = false }: Props) {
       <div
         className={`w-full max-w-lg rounded-2xl border-2 border-dashed p-10 flex flex-col items-center gap-3 text-center transition-all ${
           highlight
-            ? 'border-primary bg-primary/10 scale-[1.02] shadow-[0_0_60px_rgba(17, 34, 80,0.15)]'
+            ? 'border-primary bg-primary/10 scale-[1.02] shadow-[0_0_60px_rgba(240, 78, 35,0.15)]'
             : 'border-primary/40 bg-background/90'
         }`}
       >

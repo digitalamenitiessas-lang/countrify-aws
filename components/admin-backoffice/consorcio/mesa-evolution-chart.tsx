@@ -95,7 +95,7 @@ export function MesaEvolutionChart({ months }: Props) {
                 x2={width - paddingX}
                 y1={paddingTop + availableH * t}
                 y2={paddingTop + availableH * t}
-                stroke="rgba(17, 34, 80, 0.08)"
+                stroke="rgba(240, 78, 35, 0.08)"
                 strokeDasharray="2 4"
               />
             ))}
@@ -145,7 +145,7 @@ export function MesaEvolutionChart({ months }: Props) {
                     height={total > 0 ? h : 2}
                     rx={3}
                     ry={3}
-                    fill={total > 0 ? fill : 'rgba(17, 34, 80, 0.12)'}
+                    fill={total > 0 ? fill : 'rgba(240, 78, 35, 0.12)'}
                     style={{
                       transition: 'transform 180ms ease, filter 180ms ease',
                       transformOrigin: `${x + barW / 2}px ${paddingTop + availableH}px`,

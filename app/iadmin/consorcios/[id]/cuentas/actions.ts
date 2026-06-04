@@ -3,8 +3,10 @@
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
+import { assertSufficientFunds } from '@/lib/iadmin/cash-guards'
 import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import {
+  deactivateOtherCashAccountsInPostgres,
   existingExpensePaymentMovementInPostgres,
   getCashAccountWithAdminFromPostgres,
   getExpenseForPaymentFromPostgres,
@@ -49,24 +51,16 @@ export async function createCashAccount(input: z.input<typeof createAccountSchem
     accountNumber: parsed.accountNumber ?? null,
     cbu: parsed.cbu ?? null,
     alias: parsed.alias ?? null,
-    openingBalance: parsed.openingBalance ?? 0,
-    openingBalanceAt: parsed.openingBalanceAt ?? null,
-    notes: parsed.notes ?? null,
+    openingBalance: 0,
+    openingBalanceAt: null,
+    notes: null,
   })
 
-  if ((parsed.openingBalance ?? 0) !== 0) {
-    await insertBankMovementInPostgres({
-      administrationId: property.administration_id,
-      managedPropertyId: parsed.propertyId,
-      cashAccountId: id,
-      movementDate: parsed.openingBalanceAt ?? new Date().toISOString().slice(0, 10),
-      description: 'Saldo de apertura',
-      amount: parsed.openingBalance ?? 0,
-      externalRef: null,
-      movementKind: 'opening',
-      createdBy: profile.id,
-    })
-  }
+  // Recién creada queda como única activa del consorcio.
+  await deactivateOtherCashAccountsInPostgres({
+    managedPropertyId: parsed.propertyId,
+    exceptAccountId: id,
+  })
 
   await insertIAdminAuditLogInPostgres({
     administrationId: property.administration_id,
@@ -104,7 +98,6 @@ export async function updateCashAccount(input: z.input<typeof updateAccountSchem
     accountNumber: parsed.accountNumber,
     cbu: parsed.cbu,
     alias: parsed.alias,
-    notes: parsed.notes,
   }
   const hasChanges = Object.values(patch).some((value) => value !== undefined)
   if (!hasChanges) return
@@ -142,6 +135,15 @@ export async function setCashAccountActive(input: z.input<typeof toggleAccountSc
 
   await updateCashAccountInPostgres(parsed.accountId, { isActive: parsed.isActive })
 
+  // Regla del negocio: una sola cuenta activa por consorcio. Al activar ésta,
+  // desactivamos las demás para que el mensaje de liquidación sepa siempre cuál usar.
+  if (parsed.isActive) {
+    await deactivateOtherCashAccountsInPostgres({
+      managedPropertyId: account.managed_property_id,
+      exceptAccountId: parsed.accountId,
+    })
+  }
+
   await insertIAdminAuditLogInPostgres({
     administrationId: account.administration_id,
     actorProfileId: profile.id,
@@ -161,42 +163,68 @@ const manualMovementSchema = z.object({
   amount: z.number().refine((n) => n !== 0, 'El monto no puede ser 0'),
   externalRef: z.string().trim().max(80).optional(),
   movementKind: z.enum(['manual', 'transfer', 'adjustment']).optional().default('manual'),
+  // Si el movimiento es de salida (amount < 0) y dejaría la cuenta en negativo,
+  // se bloquea salvo override explícito.
+  allowOverdraft: z.boolean().optional().default(false),
 })
 
-export async function addManualMovement(input: z.input<typeof manualMovementSchema>) {
-  const parsed = manualMovementSchema.parse(input)
+export type CashActionResult = { ok: true } | { ok: false; error: string; code?: string }
 
-  const account = await getCashAccountWithAdminFromPostgres(parsed.cashAccountId)
-  if (!account) throw new Error('Cuenta no encontrada')
+export async function addManualMovement(
+  input: z.input<typeof manualMovementSchema>,
+): Promise<CashActionResult> {
+  try {
+    const parsed = manualMovementSchema.parse(input)
 
-  const { profile } = await requireIAdmin({
-    capability: 'cash_accounts.manage',
-    administrationId: account.administration_id,
-  })
+    const account = await getCashAccountWithAdminFromPostgres(parsed.cashAccountId)
+    if (!account) throw new Error('Cuenta no encontrada')
 
-  await insertBankMovementInPostgres({
-    administrationId: account.administration_id,
-    managedPropertyId: account.managed_property_id,
-    cashAccountId: parsed.cashAccountId,
-    movementDate: parsed.movementDate,
-    description: parsed.description,
-    amount: parsed.amount,
-    externalRef: parsed.externalRef ?? null,
-    movementKind: parsed.movementKind ?? 'manual',
-    createdBy: profile.id,
-  })
+    const { profile } = await requireIAdmin({
+      capability: 'cash_accounts.manage',
+      administrationId: account.administration_id,
+    })
 
-  await insertIAdminAuditLogInPostgres({
-    administrationId: account.administration_id,
-    actorProfileId: profile.id,
-    entityType: 'iadmin_bank_movements',
-    entityId: null,
-    action: 'movement.created',
-    metadata: { amount: parsed.amount, description: parsed.description },
-  })
+    // Movimiento de salida: validar saldo (el monto sale como -magnitud).
+    if (parsed.amount < 0) {
+      await assertSufficientFunds({
+        cashAccountId: parsed.cashAccountId,
+        outgoingAmount: Math.abs(parsed.amount),
+        allowOverdraft: parsed.allowOverdraft,
+      })
+    }
 
-  revalidatePath(`/iadmin/consorcios/${account.managed_property_id}/cuentas`)
-  revalidatePath(`/iadmin/consorcios/${account.managed_property_id}`)
+    await insertBankMovementInPostgres({
+      administrationId: account.administration_id,
+      managedPropertyId: account.managed_property_id,
+      cashAccountId: parsed.cashAccountId,
+      movementDate: parsed.movementDate,
+      description: parsed.description,
+      amount: parsed.amount,
+      externalRef: parsed.externalRef ?? null,
+      movementKind: parsed.movementKind ?? 'manual',
+      createdBy: profile.id,
+    })
+
+    await insertIAdminAuditLogInPostgres({
+      administrationId: account.administration_id,
+      actorProfileId: profile.id,
+      entityType: 'iadmin_bank_movements',
+      entityId: null,
+      action: 'movement.created',
+      metadata: { amount: parsed.amount, description: parsed.description },
+    })
+
+    revalidatePath(`/iadmin/consorcios/${account.managed_property_id}/cuentas`)
+    revalidatePath(`/iadmin/consorcios/${account.managed_property_id}`)
+    return { ok: true }
+  } catch (error) {
+    if (error instanceof Error) {
+      const code = (error as Error & { code?: string }).code
+      console.error('[addManualMovement] error:', error.message, code ? `(code=${code})` : '')
+      return { ok: false, error: error.message, code }
+    }
+    return { ok: false, error: 'Error inesperado al registrar el movimiento' }
+  }
 }
 
 const payExpenseSchema = z.object({
@@ -204,56 +232,76 @@ const payExpenseSchema = z.object({
   cashAccountId: z.string().uuid(),
   movementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   externalRef: z.string().trim().max(80).optional(),
+  // Si el pago dejaría la cuenta en negativo, se bloquea salvo override.
+  allowOverdraft: z.boolean().optional().default(false),
 })
 
-export async function payExpense(input: z.input<typeof payExpenseSchema>) {
-  const parsed = payExpenseSchema.parse(input)
+export async function payExpense(
+  input: z.input<typeof payExpenseSchema>,
+): Promise<CashActionResult> {
+  try {
+    const parsed = payExpenseSchema.parse(input)
 
-  const expense = await getExpenseForPaymentFromPostgres(parsed.expenseId)
-  if (!expense) throw new Error('Gasto no encontrado')
-  if (expense.status === 'draft' || expense.status === 'rejected') {
-    throw new Error('No se puede pagar un gasto en estado borrador o rechazado')
+    const expense = await getExpenseForPaymentFromPostgres(parsed.expenseId)
+    if (!expense) throw new Error('Gasto no encontrado')
+    if (expense.status === 'draft' || expense.status === 'rejected') {
+      throw new Error('No se puede pagar un gasto en estado borrador o rechazado')
+    }
+
+    const { profile } = await requireIAdmin({
+      capability: 'expenses.mark_paid',
+      administrationId: expense.administration_id,
+    })
+
+    const account = await getCashAccountWithAdminFromPostgres(parsed.cashAccountId)
+    if (!account) throw new Error('Cuenta no encontrada')
+    if (account.managed_property_id !== expense.managed_property_id) {
+      throw new Error('La cuenta no pertenece al consorcio del gasto')
+    }
+
+    if (await existingExpensePaymentMovementInPostgres(parsed.expenseId)) {
+      throw new Error('Este gasto ya tiene un pago registrado')
+    }
+
+    await assertSufficientFunds({
+      cashAccountId: parsed.cashAccountId,
+      outgoingAmount: Number(expense.amount),
+      allowOverdraft: parsed.allowOverdraft,
+    })
+
+    await insertBankMovementInPostgres({
+      administrationId: expense.administration_id,
+      managedPropertyId: expense.managed_property_id,
+      cashAccountId: parsed.cashAccountId,
+      movementDate: parsed.movementDate,
+      description: `Pago a proveedor: ${expense.description}`,
+      amount: -Number(expense.amount),
+      externalRef: parsed.externalRef ?? null,
+      movementKind: 'expense_payment',
+      expenseId: parsed.expenseId,
+      createdBy: profile.id,
+    })
+
+    await insertIAdminAuditLogInPostgres({
+      administrationId: expense.administration_id,
+      actorProfileId: profile.id,
+      entityType: 'iadmin_expenses',
+      entityId: parsed.expenseId,
+      action: 'expense.paid',
+      metadata: { amount: Number(expense.amount), cash_account_id: parsed.cashAccountId },
+    })
+
+    revalidatePath(`/iadmin/gastos`)
+    revalidatePath(`/iadmin/gastos/${parsed.expenseId}`)
+    revalidatePath(`/iadmin/consorcios/${expense.managed_property_id}`)
+    revalidatePath(`/iadmin/consorcios/${expense.managed_property_id}/cuentas`)
+    return { ok: true }
+  } catch (error) {
+    if (error instanceof Error) {
+      const code = (error as Error & { code?: string }).code
+      console.error('[payExpense] error:', error.message, code ? `(code=${code})` : '')
+      return { ok: false, error: error.message, code }
+    }
+    return { ok: false, error: 'Error inesperado al registrar el pago' }
   }
-
-  const { profile } = await requireIAdmin({
-    capability: 'expenses.mark_paid',
-    administrationId: expense.administration_id,
-  })
-
-  const account = await getCashAccountWithAdminFromPostgres(parsed.cashAccountId)
-  if (!account) throw new Error('Cuenta no encontrada')
-  if (account.managed_property_id !== expense.managed_property_id) {
-    throw new Error('La cuenta no pertenece al consorcio del gasto')
-  }
-
-  if (await existingExpensePaymentMovementInPostgres(parsed.expenseId)) {
-    throw new Error('Este gasto ya tiene un pago registrado')
-  }
-
-  await insertBankMovementInPostgres({
-    administrationId: expense.administration_id,
-    managedPropertyId: expense.managed_property_id,
-    cashAccountId: parsed.cashAccountId,
-    movementDate: parsed.movementDate,
-    description: `Pago a proveedor: ${expense.description}`,
-    amount: -Number(expense.amount),
-    externalRef: parsed.externalRef ?? null,
-    movementKind: 'expense_payment',
-    expenseId: parsed.expenseId,
-    createdBy: profile.id,
-  })
-
-  await insertIAdminAuditLogInPostgres({
-    administrationId: expense.administration_id,
-    actorProfileId: profile.id,
-    entityType: 'iadmin_expenses',
-    entityId: parsed.expenseId,
-    action: 'expense.paid',
-    metadata: { amount: Number(expense.amount), cash_account_id: parsed.cashAccountId },
-  })
-
-  revalidatePath(`/iadmin/gastos`)
-  revalidatePath(`/iadmin/gastos/${parsed.expenseId}`)
-  revalidatePath(`/iadmin/consorcios/${expense.managed_property_id}`)
-  revalidatePath(`/iadmin/consorcios/${expense.managed_property_id}/cuentas`)
 }

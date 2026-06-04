@@ -6,9 +6,9 @@ import { usePathname } from 'next/navigation'
 import {
   FileSpreadsheet,
   Megaphone,
+  MessageSquareText,
   Plus,
   Receipt,
-  ScrollText,
   Wallet,
   X,
   Zap,
@@ -42,20 +42,20 @@ const ACTIONS: ReadonlyArray<Action> = [
     tone: 'bg-emerald-100 text-emerald-700',
   },
   {
-    label: 'Liquidar período',
-    hint: 'Emitir expensas del mes',
-    href: '/iadmin/liquidaciones',
-    icon: ScrollText,
-    need: 'liquidations.create',
-    tone: 'bg-sky-100 text-sky-700',
-  },
-  {
     label: 'Enviar comunicado',
-    hint: 'Aviso a todo el country',
+    hint: 'Aviso a todo el edificio',
     href: '/iadmin/comunicaciones',
     icon: Megaphone,
     need: 'communications.send',
     tone: 'bg-purple-100 text-purple-700',
+  },
+  {
+    label: 'Ver reclamos',
+    hint: 'Pendientes de los vecinos',
+    href: '/iadmin/expedientes',
+    icon: MessageSquareText,
+    need: 'consorcio.view',
+    tone: 'bg-rose-100 text-rose-700',
   },
 ]
 

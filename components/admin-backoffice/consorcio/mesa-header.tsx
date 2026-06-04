@@ -15,9 +15,11 @@ import {
   Users2,
   Wallet,
 } from 'lucide-react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { Sparkline } from '@/components/admin-backoffice/shared/sparkline'
 import { AnimatedNumber } from '@/components/admin-backoffice/shared/animated-number'
 import { MesaEvolutionChart } from '@/components/admin-backoffice/consorcio/mesa-evolution-chart'
+import { PeriodPicker } from '@/components/admin-backoffice/shared/period-picker'
 import type { IAdminMesaState, IAdminMonthlyGrid } from '@/lib/types'
 
 type Props = {
@@ -78,7 +80,17 @@ const TONE_CLASSES: Record<StatusTone, { chip: string; dot: string }> = {
 }
 
 export function MesaHeader({ grid, state, visibleRange, onChangeRange }: Props) {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const [chartOpen, setChartOpen] = useState(false)
+
+  function handlePeriodChange(next: { year: number; month: number } | null) {
+    if (!next) return
+    if (next.year === grid.selectedPeriod.year && next.month === grid.selectedPeriod.month) return
+    const params = new URLSearchParams(searchParams?.toString() ?? '')
+    params.set('period', `${next.year}-${String(next.month).padStart(2, '0')}`)
+    router.push(`?${params.toString()}`, { scroll: false })
+  }
 
   // Permitir toggle externo del chart vía evento (desde command palette)
   useEffect(() => {
@@ -112,10 +124,19 @@ export function MesaHeader({ grid, state, visibleRange, onChangeRange }: Props) 
     <section className="mesa-card overflow-hidden">
       <header className="px-6 py-5 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground font-medium">
-            Mesa del mes
-          </p>
-          <h1 className="font-serif text-3xl font-bold text-foreground capitalize leading-[1.05] mt-0.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-[10px] uppercase tracking-[0.16em] text-muted-foreground font-medium">
+              Mesa del mes
+            </p>
+            <PeriodPicker
+              size="sm"
+              align="start"
+              value={grid.selectedPeriod}
+              availablePeriods={grid.availablePeriods}
+              onChange={handlePeriodChange}
+            />
+          </div>
+          <h1 className="font-serif text-3xl font-bold text-foreground capitalize leading-[1.05] mt-1.5">
             {monthName(current.month, current.year)}
           </h1>
           <div className="mt-2.5 flex items-center gap-2 flex-wrap">
@@ -131,6 +152,11 @@ export function MesaHeader({ grid, state, visibleRange, onChangeRange }: Props) 
               </span>
               {status.label}
             </span>
+            {!current.isCurrent ? (
+              <span className="inline-flex items-center gap-1 rounded-full border border-sky-300 bg-sky-50 text-sky-800 px-2 py-0.5 text-[10px] uppercase tracking-wider font-medium">
+                {grid.isFuturePeriod ? 'Mes futuro' : 'Mes histórico'}
+              </span>
+            ) : null}
             {current.periodStatus === 'locked' || current.periodStatus === 'closed' ? (
               <span className="inline-flex items-center gap-1 rounded-full border border-slate-300 bg-slate-100 text-slate-700 px-2 py-0.5 text-[10px]">
                 <Lock className="w-2.5 h-2.5" /> Período {current.periodStatus}
@@ -282,7 +308,7 @@ function KpiCard({
             />
           ) : null}
         </p>
-        <p className="stat-value font-serif text-[22px] font-semibold text-foreground leading-tight mt-0.5 truncate">
+        <p className="stat-value font-serif text-lg sm:text-[20px] xl:text-[22px] font-semibold text-foreground leading-tight mt-0.5 whitespace-nowrap tabular-nums tracking-tight">
           <AnimatedNumber value={value} format={format} />
         </p>
         <div className={`text-[11px] ${hintColor} mt-1 flex items-center gap-1.5 flex-wrap`}>
@@ -308,7 +334,7 @@ function KpiCard({
           ) : null}
         </div>
       </div>
-      {sparkline ? <div className="shrink-0 pt-1 -mr-1">{sparkline}</div> : null}
+      {sparkline ? <div className="shrink-0 pt-1 -mr-1 hidden xl:block">{sparkline}</div> : null}
     </>
   )
 

@@ -1,8 +1,11 @@
+import Link from 'next/link'
+import { ArrowRight, Users } from 'lucide-react'
 import { ExpensesTable } from '@/components/admin-backoffice/gastos/expenses-table'
 import { NewExpenseForm } from '@/components/admin-backoffice/gastos/new-expense-form'
 import { PropertyFilterBanner } from '@/components/admin-backoffice/shell/property-filter-banner'
+import { Button } from '@/components/ui/button'
 import { can, requireIAdmin } from '@/lib/auth'
-import { getIAdminExpensesInbox, getIAdminPortfolio, getIAdminProviders } from '@/lib/data'
+import { getIAdminCashAccounts, getIAdminExpensesInbox, getIAdminPortfolio, getIAdminProviders, getIAdminUnitsWithHolders } from '@/lib/data'
 import { getCurrentPropertyId } from '@/lib/iadmin/current-property'
 
 export default async function GastosPage() {
@@ -34,14 +37,46 @@ export default async function GastosPage() {
 
   const canCreate = can(context, 'expenses.create', { administrationId })
 
+  // Unidades activas por consorcio, para el alta de "gasto particular" (cargo
+  // asignado a una sola unidad, no prorrateado).
+  const unitsByProperty: Record<string, { id: string; code: string; kind: string }[]> = {}
+  // Cuentas (banco/caja) por consorcio, para poder pagar el gasto desde una
+  // cuenta al cargarlo y mantener la caja al día.
+  const accountsByProperty: Record<string, { id: string; name: string; isActive: boolean }[]> = {}
+  if (canCreate && portfolio) {
+    const [unitLists, accountLists] = await Promise.all([
+      Promise.all(portfolio.properties.map((p) => getIAdminUnitsWithHolders(p.id))),
+      Promise.all(portfolio.properties.map((p) => getIAdminCashAccounts(p.id))),
+    ])
+    portfolio.properties.forEach((p, i) => {
+      unitsByProperty[p.id] = unitLists[i]
+        .filter((u) => u.isActive)
+        .map((u) => ({ id: u.id, code: u.code, kind: u.kind }))
+      accountsByProperty[p.id] = accountLists[i].map((a) => ({
+        id: a.id,
+        name: a.name,
+        isActive: a.isActive,
+      }))
+    })
+  }
+
   return (
     <div className="space-y-6">
-      <header className="glass-card rounded-2xl p-6">
-        <p className="text-xs uppercase tracking-wider text-primary font-medium">Bandeja de gastos</p>
-        <h1 className="font-serif text-2xl font-bold text-foreground mt-1">Gastos a procesar</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Filtra y prioriza gastos pendientes de revision o validacion documental.
-        </p>
+      <header className="glass-card rounded-2xl p-6 flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <p className="text-xs uppercase tracking-wider text-primary font-medium">Bandeja de gastos</p>
+          <h1 className="font-serif text-2xl font-bold text-foreground mt-1">Gastos a procesar</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Filtra y prioriza gastos pendientes de revision o validacion documental.
+          </p>
+        </div>
+        <Button asChild variant="outline" size="sm" className="shrink-0">
+          <Link href="/iadmin/proveedores">
+            <Users className="w-3.5 h-3.5 mr-1.5" />
+            Gestionar proveedores
+            <ArrowRight className="w-3 h-3 ml-1" />
+          </Link>
+        </Button>
       </header>
 
       {activeProperty ? (
@@ -67,10 +102,12 @@ export default async function GastosPage() {
             defaultCategory: p.defaultCategory,
             defaultDescription: p.defaultDescription,
           }))}
+          unitsByProperty={unitsByProperty}
+          accountsByProperty={accountsByProperty}
         />
       ) : null}
 
-      <ExpensesTable expenses={expenses} />
+      <ExpensesTable expenses={expenses} repeatPropertyId={currentPropertyId} />
     </div>
   )
 }

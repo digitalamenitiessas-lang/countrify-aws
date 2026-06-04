@@ -48,6 +48,8 @@ import type {
   IAdminPeriodStatus,
   IAdminLiquidationItem,
   IAdminLiquidationItemDueAmount,
+  IAdminPayableExpense,
+  IAdminPayableProviderGroup,
   IAdminLiquidationRunDetail,
   IAdminManagedProperty,
   IAdminMesaState,
@@ -150,6 +152,7 @@ import {
   listRunsWithUnitItemFromPostgres,
   listUnitPaymentsInWindowFromPostgres,
   listUnitsBasicByPropertyFromPostgres,
+  listUnpaidPayableExpensesForPropertyFromPostgres,
   sumImputedExpensesByPeriodsFromPostgres,
   sumImputedTotalsForPeriodFromPostgres,
   sumLivePaymentsByUnitForItemsFromPostgres,
@@ -157,6 +160,25 @@ import {
   type RunForMesaItemRow,
   type RunForMesaRow,
 } from '@/lib/db/iadmin-reads'
+import {
+  listAdministrationAccountingPeriodsFromPostgres,
+  listAllAccountingPeriodsFromPostgres,
+  listUnitLedgerEntriesFromPostgres,
+  listUnitAppliedPaymentsByChargePeriodFromPostgres,
+  sumOpenLateFeesByUnitForRunFromPostgres,
+  sumOpenLateFeesByUnitPriorPeriodsFromPostgres,
+} from '@/lib/db/iadmin-reads'
+import {
+  getManagedPropertyOperationalSettingsFromPostgres,
+  getRunPaymentStatsFromPostgres,
+  isLiquidationRunSupersededInPostgres,
+  materializeLateFeesForAdministrationInPostgres,
+} from '@/lib/db/iadmin-writes'
+import type {
+  IAdminLedgerEntry,
+  IAdminMonthlyTrendPoint,
+  IAdminOperationalSettings,
+} from '@/lib/types'
 import {
   getAccountingPeriodIdAndStatusFromPostgres,
   getManagedPropertyAdminIdFromPostgres,
@@ -1077,6 +1099,10 @@ export async function getSuperAdminDashboardData(): Promise<SuperAdminDashboardD
       occupancyRate,
       administration: managedContext?.administration ?? null,
       managedProperty: managedContext?.managedProperty ?? null,
+      adminLoadedUnitsCount: 0,
+      adminLoadedBuildingInfoCount: 0,
+      adminLoadedExpensesCount: 0,
+      adminLastActivityAt: null,
     }
   })
 
@@ -1356,7 +1382,7 @@ export async function getOwnerDashboardData(profileId: string): Promise<OwnerDas
   const profileRow = await findProfileById(profileId)
   if (!profileRow) return null
 
-  const membershipRows = await getUnitProfileMembershipsForProfileFromPostgres(profileId, 'propietario')
+  const membershipRows = await getUnitProfileMembershipsForProfileFromPostgres(profileId, 'vecino_principal')
   const memberships = membershipRows.map(mapUnitProfileMembership)
   const unitIds = memberships.map((membership) => membership.unitId)
   const buildingIds = Array.from(new Set(memberships.map((membership) => membership.buildingId)))
@@ -1364,7 +1390,7 @@ export async function getOwnerDashboardData(profileId: string): Promise<OwnerDas
   const [liquidationRows, paymentsRows, buildingInfoRows] = await Promise.all([
     getOwnerLiquidationItemsByUnitIdsFromPostgres(unitIds),
     getOwnerPaymentsByUnitIdsFromPostgres(unitIds),
-    getBuildingInformationByBuildingIdsFromPostgres(buildingIds, ['residentes', 'propietarios']),
+    getBuildingInformationByBuildingIdsFromPostgres(buildingIds, ['residentes', 'vecinos']),
   ])
 
   const latestByUnit = new Map<string, IAdminLiquidationItem>()
@@ -1375,8 +1401,9 @@ export async function getOwnerDashboardData(profileId: string): Promise<OwnerDas
     const activeHolder = holders.find((holder) => holder?.is_active) ?? null
     const ordinaryAmount = Number(item.ordinary_amount ?? item.amount ?? 0)
     const extraordinaryAmount = Number(item.extraordinary_amount ?? 0)
+    const particularAmount = Number(item.particular_amount ?? 0)
     const previousBalance = Number(item.previous_balance ?? 0)
-    const subtotal = round2(ordinaryAmount + extraordinaryAmount + previousBalance)
+    const subtotal = round2(ordinaryAmount + extraordinaryAmount + particularAmount + previousBalance)
 
     latestByUnit.set(item.unit_id, {
       id: item.id,
@@ -1388,6 +1415,7 @@ export async function getOwnerDashboardData(profileId: string): Promise<OwnerDas
       prorataCoefficient: Number(item.prorata_coefficient ?? 0),
       ordinaryAmount,
       extraordinaryAmount,
+      particularAmount,
       previousBalance,
       amount: ordinaryAmount,
       subtotal,
@@ -1470,6 +1498,7 @@ function mapManagedProperty(row: any): IAdminManagedProperty {
     isActive: Boolean(row.is_active),
     totalUnits: building?.total_units ?? 0,
     legalInfo: (row.legal_info ?? {}) as IAdminLegalInfo,
+    operationalSettings: (row.operational_settings ?? {}) as IAdminOperationalSettings,
     createdAt: row.created_at,
   }
 }
@@ -1490,6 +1519,7 @@ function mapManagedPropertyFromPostgresRow(row: Awaited<ReturnType<typeof getIAd
     isActive: Boolean(row.is_active),
     totalUnits: Number(row.total_units ?? 0),
     legalInfo: (row.legal_info ?? {}) as IAdminLegalInfo,
+    operationalSettings: (row.operational_settings ?? {}) as IAdminOperationalSettings,
     createdAt: row.created_at,
   }
 }
@@ -1520,6 +1550,7 @@ function mapAccountingPeriod(row: any): IAdminAccountingPeriod {
     periodMonth: row.period_month,
     status: row.status,
     closedAt: row.closed_at ?? null,
+    closePolicy: 'issued_required',
   }
 }
 
@@ -1585,6 +1616,8 @@ function mapExpenseSummaryFromPostgresRow(
     hasDocuments: Number(row.document_count ?? 0) > 0,
     pendingExtraction: Number(row.pending_extraction_count ?? 0) > 0,
     createdAt: row.created_at,
+    periodYear: row.period_year ?? null,
+    periodMonth: row.period_month ?? null,
   }
 }
 
@@ -1763,6 +1796,7 @@ export async function getIAdminLiquidationRuns(administrationId: string): Promis
     status: row.status as IAdminLiquidationStatus,
     totalExpenses: Number(row.total_expenses ?? 0),
     totalUnits: Number(row.total_units ?? 0),
+    operationalSnapshot: null,
     generatedAt: row.generated_at,
     closedAt: row.closed_at,
   }))
@@ -1925,8 +1959,6 @@ export async function getIAdminLinkableProfiles(buildingId: string): Promise<IAd
     role: r.role,
     phone: r.phone,
     activeMembershipsCount: r.active_memberships_count,
-    sameBuilding: r.same_building,
-    currentBuildingName: r.current_building_name,
   }))
 }
 
@@ -1968,8 +2000,9 @@ function computeDueAmountsForItem(
   extraordinary: number,
   previousBalance: number,
   dueDates: IAdminDueDate[],
+  particular = 0,
 ): IAdminLiquidationItemDueAmount[] {
-  const subtotal = ordinary + extraordinary + previousBalance
+  const subtotal = ordinary + extraordinary + particular + previousBalance
   return dueDates.map((due) => ({
     label: due.label,
     date: due.date,
@@ -2032,8 +2065,9 @@ export async function getIAdminLiquidationRunDetail(runId: string): Promise<IAdm
     .map((item): IAdminLiquidationItem => {
       const ordinaryAmount = Number(item.ordinary_amount ?? item.amount ?? 0)
       const extraordinaryAmount = Number(item.extraordinary_amount ?? 0)
+      const particularAmount = Number(item.particular_amount ?? 0)
       const previousBalance = Number(item.previous_balance ?? 0)
-      const subtotal = round2(ordinaryAmount + extraordinaryAmount + previousBalance)
+      const subtotal = round2(ordinaryAmount + extraordinaryAmount + particularAmount + previousBalance)
       const itemPayments = paymentsByItem.get(item.id) ?? []
       const collectedAmount = round2(itemPayments.reduce((s, p) => s + p.amount, 0))
       const balanceRemaining = round2(Math.max(0, subtotal - collectedAmount))
@@ -2047,10 +2081,11 @@ export async function getIAdminLiquidationRunDetail(runId: string): Promise<IAdm
         prorataCoefficient: Number(item.prorata_coefficient),
         ordinaryAmount,
         extraordinaryAmount,
+        particularAmount,
         previousBalance,
         amount: ordinaryAmount,
         subtotal,
-        dueAmounts: computeDueAmountsForItem(ordinaryAmount, extraordinaryAmount, previousBalance, dueDates),
+        dueAmounts: computeDueAmountsForItem(ordinaryAmount, extraordinaryAmount, previousBalance, dueDates, particularAmount),
         collectedAmount,
         balanceRemaining,
         payments: itemPayments,
@@ -2066,6 +2101,8 @@ export async function getIAdminLiquidationRunDetail(runId: string): Promise<IAdm
     category: e.category,
     amount: Number(e.amount),
     kind: (e.expense_kind ?? 'ordinaria') as 'ordinaria' | 'extraordinaria',
+    documentType: e.document_type,
+    documentNumber: e.document_number,
   }))
 
   const ordinaryExpenses = round2(
@@ -2098,6 +2135,14 @@ export async function getIAdminLiquidationRunDetail(runId: string): Promise<IAdm
   const balanceTotal = round2(items.reduce((sum, it) => sum + it.balanceRemaining, 0))
 
   const cashAccounts = await getIAdminCashAccounts(row.managed_property_id)
+
+  // Solo tiene sentido chequear supersesión en runs emitidas/cerradas (las
+  // únicas reabribles). Si ya fue arrastrada a una posterior, la UI oculta la
+  // reapertura.
+  const isSuperseded =
+    row.status === 'issued' || row.status === 'closed'
+      ? await isLiquidationRunSupersededInPostgres(runId)
+      : false
 
   return {
     id: row.id,
@@ -2132,6 +2177,7 @@ export async function getIAdminLiquidationRunDetail(runId: string): Promise<IAdm
     collectedTotal,
     balanceTotal,
     cashAccounts,
+    isSuperseded,
   }
 }
 
@@ -2165,11 +2211,12 @@ export async function getIAdminConsorcioDashboard(propertyId: string): Promise<I
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
 
-  const [expenses, activeUnitsCount, runs, cashAccounts] = await Promise.all([
+  const [expenses, activeUnitsCount, runs, cashAccounts, payable] = await Promise.all([
     listExpensesForDashboardFromPostgres(propertyId),
     countActiveUnitsByPropertyFromPostgres(propertyId),
     listDashboardRunsFromPostgres({ managedPropertyId: propertyId, limit: 12 }),
     getIAdminCashAccounts(propertyId),
+    getIAdminAccountsPayable(propertyId),
   ])
 
   // ---- Saldos ----
@@ -2190,34 +2237,32 @@ export async function getIAdminConsorcioDashboard(propertyId: string): Promise<I
   const totalBalance = balances.reduce((sum, b) => sum + b.amount, 0)
 
   // ---- Cuentas por pagar a proveedores ----
-  const candidateExpenseIds = expenses
-    .filter((e) => e.status === 'approved' || e.status === 'imputed')
-    .map((e) => e.id)
-  const paidExpenseIds = await listPaidExpenseIdsFromPostgres(candidateExpenseIds)
+  // Misma fuente de verdad que la sección "Proveedores a pagar" de Cuentas:
+  // gastos aprobados/imputados sin un movimiento de pago real en caja,
+  // agrupados por proveedor y con el detalle de cada gasto impago.
+  const accountsPayable = payable.groups
+  const totalPayable = payable.total
 
-  const payableMap = new Map<string, IAdminAccountPayable>()
-  for (const e of expenses) {
-    if (e.status !== 'approved' && e.status !== 'imputed') continue
-    if (paidExpenseIds.has(e.id)) continue
-    const providerId = e.provider_id ?? null
-    const providerName = e.provider_name ?? 'Sin proveedor'
-    const key = providerId ?? 'no-provider'
-    const current = payableMap.get(key) ?? {
-      providerId,
-      providerName,
-      amount: 0,
-      expensesCount: 0,
-      oldestDate: null,
-    }
-    current.amount += Number(e.amount)
-    current.expensesCount += 1
-    if (!current.oldestDate || (e.issued_at && e.issued_at < current.oldestDate)) {
-      current.oldestDate = e.issued_at ?? current.oldestDate
-    }
-    payableMap.set(key, current)
+  // ---- Items + pagos de TODOS los runs con período (una sola lectura) ----
+  // Se reusa para cobranzas del mes, deudas históricas y la tendencia mensual.
+  const runsWithPeriod = runs.filter((r) => r.period_year && r.period_month)
+  const allItems =
+    runsWithPeriod.length > 0
+      ? await listDashboardItemsByRunsFromPostgres(runsWithPeriod.map((r) => r.id))
+      : []
+  const paidByItem = await sumLivePaymentsByItemIdsFromPostgres(allItems.map((it) => it.id))
+
+  const itemsByRun = new Map<string, typeof allItems>()
+  for (const it of allItems) {
+    const arr = itemsByRun.get(it.liquidation_run_id) ?? []
+    arr.push(it)
+    itemsByRun.set(it.liquidation_run_id, arr)
   }
-  const accountsPayable = Array.from(payableMap.values()).sort((a, b) => b.amount - a.amount)
-  const totalPayable = accountsPayable.reduce((sum, p) => sum + p.amount, 0)
+  const collectedByRun = new Map<string, number>()
+  for (const it of allItems) {
+    const paid = paidByItem.get(it.id) ?? 0
+    collectedByRun.set(it.liquidation_run_id, (collectedByRun.get(it.liquidation_run_id) ?? 0) + paid)
+  }
 
   // ---- Liquidados / Cobranzas del periodo actual ----
   const currentRun = runs.find(
@@ -2227,7 +2272,7 @@ export async function getIAdminConsorcioDashboard(propertyId: string): Promise<I
   const liquidatedExtraordinary = currentRun ? Number(currentRun.extraordinary_total ?? 0) : 0
   const liquidatedTotal = liquidatedOrdinary + liquidatedExtraordinary
 
-  let collectedTotal = currentRun ? await sumLivePaymentsForRunFromPostgres(currentRun.id) : 0
+  let collectedTotal = currentRun ? collectedByRun.get(currentRun.id) ?? 0 : 0
   collectedTotal = Math.round(collectedTotal * 100) / 100
   const collectedOrdinary = collectedTotal
   const collectedExtraordinary = 0
@@ -2249,59 +2294,68 @@ export async function getIAdminConsorcioDashboard(propertyId: string): Promise<I
     placeholder: false,
   }
 
+  // ---- Tendencia mensual: liquidado vs cobrado (orden cronológico ascendente) ----
+  const monthNamesShort = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+  const monthlyTrend: IAdminMonthlyTrendPoint[] = runsWithPeriod
+    .filter((r) => r.status !== 'calculated')
+    .map((r) => {
+      const year = r.period_year as number
+      const month = r.period_month as number
+      const liquidated =
+        Math.round((Number(r.ordinary_total ?? 0) + Number(r.extraordinary_total ?? 0)) * 100) / 100
+      const collected = Math.round((collectedByRun.get(r.id) ?? 0) * 100) / 100
+      return {
+        year,
+        month,
+        periodLabel: `${monthNamesShort[month - 1] ?? ''} ${String(year).slice(-2)}`,
+        liquidated,
+        collected,
+        collectionRatePct: liquidated > 0 ? Math.round((collected / liquidated) * 100) : null,
+        isCurrent: year === currentYear && month === currentMonth,
+      }
+    })
+    .sort((a, b) => (a.year - b.year) || (a.month - b.month))
+
   // ---- Deudas históricas ----
-  const historicalRuns = runs.filter(
+  const historicalRuns = runsWithPeriod.filter(
     (r) =>
       r.status !== 'calculated' &&
       !(r.period_year === currentYear && r.period_month === currentMonth),
   )
 
   const overdueBuckets: IAdminOverdueBucket[] = []
-  if (historicalRuns.length > 0) {
-    const runIds = historicalRuns.map((r) => r.id)
-    const items = await listDashboardItemsByRunsFromPostgres(runIds)
-    const itemIds = items.map((it) => it.id)
-    const paidByItem = await sumLivePaymentsByItemIdsFromPostgres(itemIds)
-
-    const itemsByRun = new Map<string, typeof items>()
-    for (const it of items) {
-      const arr = itemsByRun.get(it.liquidation_run_id) ?? []
-      arr.push(it)
-      itemsByRun.set(it.liquidation_run_id, arr)
-    }
-
-    for (const run of historicalRuns) {
-      if (!run.period_year || !run.period_month) continue
-      const runItems = itemsByRun.get(run.id) ?? []
-      let runDebt = 0
-      let unitsOwing = 0
-      for (const it of runItems) {
-        const subtotal =
-          Number(it.ordinary_amount ?? 0) +
-          Number(it.extraordinary_amount ?? 0) +
-          Number(it.previous_balance ?? 0)
-        const paid = paidByItem.get(it.id) ?? 0
-        const debt = Math.max(0, subtotal - paid)
-        if (debt > 0) {
-          runDebt += debt
-          unitsOwing += 1
-        }
+  for (const run of historicalRuns) {
+    if (!run.period_year || !run.period_month) continue
+    const runItems = itemsByRun.get(run.id) ?? []
+    let runDebt = 0
+    let unitsOwing = 0
+    for (const it of runItems) {
+      const subtotal =
+        Number(it.ordinary_amount ?? 0) +
+        Number(it.extraordinary_amount ?? 0) +
+        Number(it.particular_amount ?? 0) +
+        Number(it.previous_balance ?? 0)
+      const paid = paidByItem.get(it.id) ?? 0
+      const debt = Math.max(0, subtotal - paid)
+      if (debt > 0) {
+        runDebt += debt
+        unitsOwing += 1
       }
-      if (runDebt <= 0) continue
-      const periodDate = new Date(run.period_year, run.period_month - 1, 1)
-      const today = new Date(currentYear, currentMonth - 1, 1)
-      const periodsOld = Math.max(
-        1,
-        (today.getFullYear() - periodDate.getFullYear()) * 12 +
-          (today.getMonth() - periodDate.getMonth()),
-      )
-      overdueBuckets.push({
-        periodLabel: periodLabelFromDate(run.period_year, run.period_month),
-        periodsOld,
-        unitsCount: unitsOwing,
-        totalAmount: Math.round(runDebt * 100) / 100,
-      })
     }
+    if (runDebt <= 0) continue
+    const periodDate = new Date(run.period_year, run.period_month - 1, 1)
+    const today = new Date(currentYear, currentMonth - 1, 1)
+    const periodsOld = Math.max(
+      1,
+      (today.getFullYear() - periodDate.getFullYear()) * 12 +
+        (today.getMonth() - periodDate.getMonth()),
+    )
+    overdueBuckets.push({
+      periodLabel: periodLabelFromDate(run.period_year, run.period_month),
+      periodsOld,
+      unitsCount: unitsOwing,
+      totalAmount: Math.round(runDebt * 100) / 100,
+    })
   }
   overdueBuckets.sort((a, b) => b.periodsOld - a.periodsOld)
   const totalOverdueAmount = overdueBuckets.reduce((s, b) => s + b.totalAmount, 0)
@@ -2327,6 +2381,7 @@ export async function getIAdminConsorcioDashboard(propertyId: string): Promise<I
     overdueBuckets,
     totalOverdueAmount,
     totalOverdueUnits,
+    monthlyTrend,
     pendingExpenses,
     pendingDocuments,
     activeUnitsCount,
@@ -2368,20 +2423,37 @@ export async function getIAdminReminders(
   }))
 }
 
-export async function getIAdminPortfolioOverview(administrationId: string): Promise<IAdminPortfolioOverview | null> {
-  const [admin, propertyRows] = await Promise.all([
+export async function getIAdminPortfolioOverview(
+  administrationId: string,
+  selectedPeriodInput?: { year: number; month: number } | null,
+): Promise<IAdminPortfolioOverview | null> {
+  const [admin, propertyRows, availablePeriodRows] = await Promise.all([
     getIAdminAdministrationByIdFromPostgres(administrationId),
     getIAdminManagedPropertiesByAdministrationFromPostgres(administrationId),
+    listAdministrationAccountingPeriodsFromPostgres(administrationId),
   ])
 
   if (!admin) return null
 
+  // Materializar recargos por mora antes de calcular los KPIs del overview.
+  // Sin esto el card "Morosidad acumulada" puede quedar bajo el valor real
+  // si nadie entró a Cobranzas en los últimos días.
+  await materializeLateFeesForAdministrationInPostgres({
+    administrationId,
+    asOfDate: new Date().toISOString().slice(0, 10),
+    actorProfileId: null,
+  })
+
   const properties = propertyRows.map(mapManagedPropertyFromPostgresRow)
   const now = new Date()
+  const selectedPeriod = selectedPeriodInput ?? {
+    year: now.getFullYear(),
+    month: now.getMonth() + 1,
+  }
   const overviewRows = await getIAdminPortfolioOverviewRowsFromPostgres(
     administrationId,
-    now.getFullYear(),
-    now.getMonth() + 1,
+    selectedPeriod.year,
+    selectedPeriod.month,
   )
   const overviewByProperty = new Map(overviewRows.map((row) => [row.property_id, row]))
 
@@ -2458,6 +2530,11 @@ export async function getIAdminPortfolioOverview(administrationId: string): Prom
         pendingExpenses: 0,
       },
     ),
+    selectedPeriod,
+    availablePeriods: availablePeriodRows.map((p) => ({
+      year: p.period_year,
+      month: p.period_month,
+    })),
   }
 }
 
@@ -2545,8 +2622,20 @@ export async function getIAdminMesaState(
   year: number,
   month: number,
 ): Promise<IAdminMesaState | null> {
-  const property = await getManagedPropertyAdminIdFromPostgres(propertyId)
+  const [property, operationalSettingsRow] = await Promise.all([
+    getManagedPropertyAdminIdFromPostgres(propertyId),
+    getManagedPropertyOperationalSettingsFromPostgres(propertyId),
+  ])
   if (!property) return null
+
+  // Materializar recargos por mora antes de leer estado: garantiza que los
+  // saldos pendientes que ve el admin en Mesa ya reflejen los intereses
+  // acumulados según los due_dates configurados. Es idempotente.
+  await materializeLateFeesForAdministrationInPostgres({
+    administrationId: property.administration_id,
+    asOfDate: new Date().toISOString().slice(0, 10),
+    actorProfileId: null,
+  })
 
   const period = await getAccountingPeriodIdAndStatusFromPostgres({
     managedPropertyId: propertyId,
@@ -2605,11 +2694,24 @@ export async function getIAdminMesaState(
         const sub =
           Number(it.ordinary_amount ?? 0) +
           Number(it.extraordinary_amount ?? 0) +
+          Number(it.particular_amount ?? 0) +
           Number(it.previous_balance ?? 0)
         const paid = paidByItem.get(it.id) ?? 0
         const debt = Math.max(0, Math.round((sub - paid) * 100) / 100)
         if (debt > 0) previousBalanceByUnit.set(it.unit_id, debt)
       }
+    }
+    // Sumar recargos por mora abiertos de períodos anteriores. Espeja la
+    // lógica de emitAndNotify para que el preview del Mesa de un período
+    // todavía no emitido refleje exactamente lo que se cargaría como
+    // previous_balance al emitirlo.
+    const priorLateFees = await sumOpenLateFeesByUnitPriorPeriodsFromPostgres({
+      managedPropertyId: propertyId,
+      excludePeriodId: period?.id ?? null,
+    })
+    for (const [unitId, fee] of priorLateFees.entries()) {
+      const current = previousBalanceByUnit.get(unitId) ?? 0
+      previousBalanceByUnit.set(unitId, Math.round((current + fee) * 100) / 100)
     }
   }
 
@@ -2623,6 +2725,12 @@ export async function getIAdminMesaState(
     }
   }
 
+  // Recargo por mora abierto del run actual (por unidad). Sólo si hay run
+  // emitido; el materializer ya corrió arriba para garantizar frescura.
+  const lateFeesByUnit = existingRun
+    ? await sumOpenLateFeesByUnitForRunFromPostgres(existingRun.id)
+    : new Map<string, number>()
+
   // Vencimientos: toma los del run o default (10 y 25 mes siguiente)
   const dueDates: IAdminDueDate[] = existingRun?.due_dates?.length
     ? (existingRun.due_dates as any[]).map((d: any) => ({
@@ -2634,10 +2742,17 @@ export async function getIAdminMesaState(
         const next = month === 12 ? 1 : month + 1
         const ny = month === 12 ? year + 1 : year
         const mm = String(next).padStart(2, '0')
-        return [
-          { label: '1er vencimiento', date: `${ny}-${mm}-10`, surchargePct: 0 },
-          { label: '2do vencimiento', date: `${ny}-${mm}-25`, surchargePct: 3 },
-        ]
+        const rules = Array.isArray(operationalSettingsRow?.operational_settings?.dueDateRules)
+          ? (operationalSettingsRow?.operational_settings?.dueDateRules as Array<{ label?: string; day?: number; surchargePct?: number }>)
+          : [
+              { label: '1er vencimiento', day: 10, surchargePct: 0 },
+              { label: '2do vencimiento', day: 25, surchargePct: 3 },
+            ]
+        return rules.map((rule) => ({
+          label: rule.label ?? 'Vencimiento',
+          date: `${ny}-${mm}-${String(Math.max(1, Math.min(28, Number(rule.day ?? 10)))).padStart(2, '0')}`,
+          surchargePct: Number(rule.surchargePct ?? 0),
+        }))
       })()
 
   // Generar lines por unidad
@@ -2646,7 +2761,11 @@ export async function getIAdminMesaState(
     const ord = Math.round(ordinaryTotal * prorata * 100) / 100
     const ext = Math.round(extraordinaryTotal * prorata * 100) / 100
     const prev = Math.round((previousBalanceByUnit.get(u.id) ?? 0) * 100) / 100
-    const subtotal = Math.round((ord + ext + prev) * 100) / 100
+    const lateFee = Math.round((lateFeesByUnit.get(u.id) ?? 0) * 100) / 100
+    // subtotal incluye el recargo: si la unidad acumuló mora desde la
+    // emisión, el "balance" pendiente del Mesa la refleja sin esperar al
+    // próximo período.
+    const subtotal = Math.round((ord + ext + prev + lateFee) * 100) / 100
     const collected = Math.round((paidByUnitCurrent.get(u.id) ?? 0) * 100) / 100
     const balance = Math.max(0, Math.round((subtotal - collected) * 100) / 100)
     const dueAmounts = dueDates.map((d) => ({
@@ -2664,6 +2783,7 @@ export async function getIAdminMesaState(
       ordinary: ord,
       extraordinary: ext,
       previousBalance: prev,
+      lateFee,
       subtotal,
       collected,
       balance,
@@ -2679,10 +2799,27 @@ export async function getIAdminMesaState(
     ? Math.round((totalCollected / (totalToDistribute + totalPreviousBalance)) * 100)
     : null
 
+  // Snapshot del run actual (para detectar cambios desde la última emisión)
+  // y stats de pagos vivos (para gate de re-emisión / reapertura).
+  const runSnapshotTotal = existingRun
+    ? Math.round(
+        (Number(existingRun.ordinary_total ?? 0) +
+          Number(existingRun.extraordinary_total ?? 0) +
+          Number(existingRun.previous_balance ?? 0)) *
+          100,
+      ) / 100
+    : null
+  const runPaymentStats = existingRun
+    ? await getRunPaymentStatsFromPostgres(existingRun.id)
+    : { count: 0, total: 0 }
+
   return {
     runId: existingRun?.id ?? null,
     runStatus: (existingRun?.status ?? null) as IAdminLiquidationStatus | null,
     hasRun: Boolean(existingRun),
+    runSnapshotTotal,
+    runLivePaymentsCount: runPaymentStats.count,
+    runLivePaymentsTotal: Math.round(runPaymentStats.total * 100) / 100,
     ordinaryTotal,
     extraordinaryTotal,
     previousBalanceTotal: Math.round(totalPreviousBalance * 100) / 100,
@@ -2711,13 +2848,17 @@ export async function getIAdminUnitAccountStatement(
 ): Promise<IAdminUnitAccountStatement | null> {
   const monthsCount = options.monthsCount ?? 12
 
-  // 1. Unidad + titular activo + property
   const unitRow = await getUnitWithAdminAndHolderFromPostgres({ unitId, managedPropertyId: propertyId })
   if (!unitRow) return null
   const administrationId = unitRow.administration_id
   const prorata = Number(unitRow.prorata_coefficient ?? 0)
 
-  // 2. Armar ventana de meses
+  await materializeLateFeesForAdministrationInPostgres({
+    administrationId,
+    asOfDate: new Date().toISOString().slice(0, 10),
+    actorProfileId: null,
+  })
+
   const now = new Date()
   const currentYear = now.getFullYear()
   const currentMonth = now.getMonth() + 1
@@ -2737,24 +2878,27 @@ export async function getIAdminUnitAccountStatement(
       ordinary: 0,
       extraordinary: 0,
       previousBalance: 0,
+      lateFee: 0,
       subtotal: 0,
       collected: 0,
       balance: 0,
       isCurrent: y === currentYear && m === currentMonth,
+      rolledForward: false,
+      rolledForwardToLabel: null,
     })
   }
 
   const windowStart = new Date(months[0].year, months[0].month - 1, 1).toISOString().slice(0, 10)
   const yearsInWindow = Array.from(new Set(months.map((m) => m.year)))
 
-  // 3-4-6 en paralelo
-  const [periods, runRows, paymentsRows] = await Promise.all([
+  const [periods, runRows, paymentsRows, ledgerRows, appliedRows] = await Promise.all([
     listAccountingPeriodsByYearsFromPostgres({ managedPropertyId: propertyId, years: yearsInWindow }),
     listRunsWithUnitItemFromPostgres({ managedPropertyId: propertyId, unitId }),
     listUnitPaymentsInWindowFromPostgres({ unitId, windowStart }),
+    listUnitLedgerEntriesFromPostgres({ unitId, managedPropertyId: propertyId }),
+    listUnitAppliedPaymentsByChargePeriodFromPostgres({ unitId, windowStart }),
   ])
 
-  // 3. Periodos
   const periodByKey = new Map<string, { id: string; status: IAdminPeriodStatus }>()
   for (const p of periods) {
     periodByKey.set(`${p.period_year}-${p.period_month}`, { id: p.id, status: p.status as IAdminPeriodStatus })
@@ -2764,22 +2908,99 @@ export async function getIAdminUnitAccountStatement(
     if (found) m.periodStatus = found.status
   }
 
-  // 4. Runs + items de esta unidad
+  // run_id → etiqueta de mes ("JUN 26"), para poder decir a qué liquidación se
+  // arrastró la deuda de un mes migrado.
+  const runLabelById = new Map<string, string>()
   for (const r of runRows) {
+    if (r.period_year && r.period_month) {
+      runLabelById.set(
+        r.run_id,
+        `${MONTH_LABELS_SHORT[r.period_month - 1]} ${String(r.period_year).slice(2)}`,
+      )
+    }
     if (!r.period_year || !r.period_month) continue
     const monthTarget = months.find((mm) => mm.year === r.period_year && mm.month === r.period_month)
     if (!monthTarget) continue
     monthTarget.runId = r.run_id
     monthTarget.runStatus = r.run_status as IAdminLiquidationStatus
-    if (r.item_id) {
-      monthTarget.liquidationItemId = r.item_id
-      monthTarget.ordinary = Number(r.ordinary_amount ?? 0)
-      monthTarget.extraordinary = Number(r.extraordinary_amount ?? 0)
-      monthTarget.previousBalance = Number(r.previous_balance ?? 0)
+    if (r.item_id) monthTarget.liquidationItemId = r.item_id
+  }
+
+  const ledger: IAdminLedgerEntry[] = []
+  const monthIndex = new Map<string, IAdminUnitAccountMonth>()
+  for (const month of months) monthIndex.set(`${month.year}-${month.month}`, month)
+
+  for (const row of ledgerRows) {
+    const periodYear = row.period_year ?? null
+    const periodMonth = row.period_month ?? null
+    const monthTarget =
+      periodYear && periodMonth ? monthIndex.get(`${periodYear}-${periodMonth}`) ?? null : null
+
+    const amount = Number(row.amount ?? 0)
+    const balanceOpen = Number(row.balance_open ?? 0)
+    const entryType = row.entry_type as IAdminLedgerEntry['entryType']
+    const status = row.status as IAdminLedgerEntry['status']
+
+    ledger.push({
+      id: row.id,
+      administrationId: row.administration_id,
+      managedPropertyId: row.managed_property_id,
+      unitId: row.unit_id,
+      accountingPeriodId: row.accounting_period_id,
+      liquidationRunId: row.liquidation_run_id,
+      liquidationItemId: row.liquidation_item_id,
+      paymentId: row.payment_id,
+      entryType,
+      originType: row.origin_type,
+      originId: row.origin_id,
+      description: row.description,
+      dueDate: row.due_date,
+      amount,
+      balanceOpen,
+      status,
+      metadata: (row.metadata ?? {}) as Record<string, unknown>,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+      voidedBy: row.voided_by,
+      voidedAt: row.voided_at,
+      voidReason: row.void_reason,
+    })
+
+    if (!monthTarget) continue
+
+    // Un cargo anulado porque se arrastró a una liquidación posterior
+    // (void_reason = 'migrated_to_run:<run>') NO debe tratarse como "sin
+    // facturar": el mes sí se facturó, su saldo vivo simplemente se mudó al mes
+    // destino. Lo contamos como facturado (para que el mes muestre su importe)
+    // pero NO como saldo pendiente (esa deuda vive ahora en el mes destino).
+    const isMigratedForward =
+      status === 'void' &&
+      typeof row.void_reason === 'string' &&
+      row.void_reason.startsWith('migrated_to_run:')
+    if (status === 'void' && !isMigratedForward) continue
+    if (isMigratedForward) {
+      monthTarget.rolledForward = true
+      const targetRunId = (row.void_reason as string).slice('migrated_to_run:'.length).trim()
+      const targetLabel = runLabelById.get(targetRunId) ?? null
+      if (targetLabel) monthTarget.rolledForwardToLabel = targetLabel
+    }
+
+    if (entryType === 'expensa_ordinaria') {
+      monthTarget.ordinary = Math.round((monthTarget.ordinary + amount) * 100) / 100
+    } else if (entryType === 'expensa_extraordinaria') {
+      monthTarget.extraordinary = Math.round((monthTarget.extraordinary + amount) * 100) / 100
+    } else if (entryType === 'recargo_mora') {
+      monthTarget.lateFee = Math.round((monthTarget.lateFee + amount) * 100) / 100
+    } else if (entryType !== 'pago') {
+      monthTarget.previousBalance = Math.round((monthTarget.previousBalance + amount) * 100) / 100
+    }
+    // El saldo pendiente del mes solo suma cargos vivos (no migrados): los
+    // migrados tienen balance_open=0 igual, pero somos explícitos por claridad.
+    if (!isMigratedForward && entryType !== 'pago' && (status === 'open' || status === 'partially_paid')) {
+      monthTarget.balance = Math.round((monthTarget.balance + balanceOpen) * 100) / 100
     }
   }
 
-  // 5. Para meses sin run pero con gastos imputados, calcular subtotal estimado
   const missing = months.filter((m) => m.liquidationItemId === null && m.periodStatus !== null)
   if (missing.length > 0) {
     const periodIds = missing
@@ -2805,14 +3026,9 @@ export async function getIAdminUnitAccountStatement(
     }
   }
 
-  // 6. Pagos
-  const collectedByItem = new Map<string, number>()
   const paymentsFormatted: IAdminUnitPaymentReceipt[] = []
   for (const row of paymentsRows) {
     const amount = Number(row.amount ?? 0)
-    if (!row.is_void && row.liquidation_item_id) {
-      collectedByItem.set(row.liquidation_item_id, (collectedByItem.get(row.liquidation_item_id) ?? 0) + amount)
-    }
     const periodLabel =
       row.period_year && row.period_month
         ? `${MONTH_LABELS_SHORT[row.period_month - 1]} ${String(row.period_year).slice(2)}`
@@ -2833,19 +3049,28 @@ export async function getIAdminUnitAccountStatement(
     })
   }
 
-  // 7. Consolidar cada mes
-  for (const m of months) {
-    m.subtotal = Math.round((m.ordinary + m.extraordinary + m.previousBalance) * 100) / 100
-    m.collected = m.liquidationItemId
-      ? Math.round((collectedByItem.get(m.liquidationItemId) ?? 0) * 100) / 100
-      : 0
-    m.balance = Math.max(0, Math.round((m.subtotal - m.collected) * 100) / 100)
+  for (const row of appliedRows) {
+    if (!row.period_year || !row.period_month) continue
+    const monthTarget = monthIndex.get(`${row.period_year}-${row.period_month}`)
+    if (!monthTarget) continue
+    monthTarget.collected = Math.round((monthTarget.collected + Number(row.amount ?? 0)) * 100) / 100
   }
 
-  // 8. Totales globales
-  const billed = months.reduce((s, m) => s + m.subtotal, 0)
-  const collected = months.reduce((s, m) => s + m.collected, 0)
-  const pending = months.reduce((s, m) => s + m.balance, 0)
+  for (const m of months) {
+    m.subtotal = Math.round((m.ordinary + m.extraordinary + m.previousBalance + m.lateFee) * 100) / 100
+    m.balance = Math.max(0, Math.round(m.balance * 100) / 100)
+  }
+
+  const billed = ledger
+    .filter((entry) => entry.status !== 'void' && entry.entryType !== 'pago')
+    .reduce((s, entry) => s + entry.amount, 0)
+  const collected = paymentsFormatted
+    .filter((payment) => !payment.isVoid)
+    .reduce((s, payment) => s + payment.amount, 0)
+  const pending = ledger
+    .filter((entry) => entry.status === 'open' || entry.status === 'partially_paid')
+    .filter((entry) => entry.entryType !== 'pago')
+    .reduce((s, entry) => s + entry.balanceOpen, 0)
   const collectionRatePct = billed > 0 ? Math.round((collected / billed) * 100) : null
 
   return {
@@ -2862,6 +3087,7 @@ export async function getIAdminUnitAccountStatement(
     },
     months,
     payments: paymentsFormatted,
+    ledger,
     totals: {
       billed: Math.round(billed * 100) / 100,
       collected: Math.round(collected * 100) / 100,
@@ -2873,7 +3099,14 @@ export async function getIAdminUnitAccountStatement(
 
 export async function getIAdminMonthlyGrid(
   propertyId: string,
-  options: { year?: number; monthsCount?: number } = {},
+  options: {
+    /** Compat: si se pasa sin `targetMonth`, fija el año pero el mes pivote sigue siendo el calendario. */
+    year?: number
+    /** Mes pivote sobre el que se ancla la ventana. Default: mes calendario actual. */
+    targetYear?: number
+    targetMonth?: number
+    monthsCount?: number
+  } = {},
 ): Promise<IAdminMonthlyGrid | null> {
   const propertyRow = await getManagedPropertyFullFromPostgres(propertyId)
   if (!propertyRow) return null
@@ -2882,14 +3115,17 @@ export async function getIAdminMonthlyGrid(
   const administrationId = propertyRow.administration_id
 
   const now = new Date()
-  const currentYear = options.year ?? now.getFullYear()
-  const currentMonth = now.getMonth() + 1
-  const monthsCount = options.monthsCount ?? 3  // 2 meses previos + actual
+  const realYear = now.getFullYear()
+  const realMonth = now.getMonth() + 1
+  // Mes pivote = el último de la ventana, sobre el que opera Mesa del mes.
+  const pivotYear = options.targetYear ?? options.year ?? realYear
+  const pivotMonth = options.targetMonth ?? realMonth
+  const monthsCount = options.monthsCount ?? 3  // N-1 meses previos + pivote
 
-  // Armar la ventana de meses (más reciente al final)
+  // Armar la ventana de meses (más reciente al final = pivote)
   const months: IAdminMonthlyGrid['months'] = []
   for (let i = monthsCount - 1; i >= 0; i--) {
-    const d = new Date(currentYear, currentMonth - 1 - i, 1)
+    const d = new Date(pivotYear, pivotMonth - 1 - i, 1)
     const y = d.getFullYear()
     const m = d.getMonth() + 1
     const short = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'][m - 1]
@@ -2897,7 +3133,10 @@ export async function getIAdminMonthlyGrid(
       year: y,
       month: m,
       label: `${short} ${String(y).slice(2)}`,
-      isCurrent: y === currentYear && m === currentMonth,
+      // isCurrent = mes calendario real (para que el admin distinga "hoy")
+      isCurrent: y === realYear && m === realMonth,
+      // isPivot = es el mes pivote (último de la ventana, sobre el que opera Mesa)
+      isPivot: i === 0,
       total: 0,
       periodStatus: null,
       runId: null,
@@ -3046,7 +3285,12 @@ export async function getIAdminMonthlyGrid(
         amount,
         expenseId: single?.id ?? null,
         hasDocument: list.some((e) => e.hasDocument),
-        isEditable: list.length <= 1 && m.periodStatus !== 'closed',
+        isEditable:
+          list.length <= 1 &&
+          m.periodStatus !== 'closed' &&
+          m.periodStatus !== 'locked' &&
+          m.runStatus !== 'issued' &&
+          m.runStatus !== 'closed',
         createdByName: single?.createdByName ?? null,
         createdAt: single?.createdAt ?? null,
         updatedAt: single?.updatedAt ?? null,
@@ -3093,8 +3337,32 @@ export async function getIAdminMonthlyGrid(
     0,
   )
 
-  const currentMonthObj = months[months.length - 1]
-  const readyToEmit = currentMonthObj.total > 0
+  const pivotMonthObj = months[months.length - 1]
+  const readyToEmit = pivotMonthObj.total > 0
+
+  // Construir la lista de períodos disponibles para el picker:
+  // (1) todos los períodos contables existentes del consorcio,
+  // (2) el mes calendario real (por si todavía no tiene período abierto),
+  // (3) el mes siguiente al calendario (para "adelantarse").
+  const existingPeriods = await listAllAccountingPeriodsFromPostgres(propertyId)
+  const seenPeriods = new Set<string>()
+  const availablePeriods: Array<{ year: number; month: number }> = []
+  function pushPeriod(y: number, m: number) {
+    const k = `${y}-${m}`
+    if (seenPeriods.has(k)) return
+    seenPeriods.add(k)
+    availablePeriods.push({ year: y, month: m })
+  }
+  for (const p of existingPeriods) pushPeriod(p.period_year, p.period_month)
+  pushPeriod(realYear, realMonth)
+  const nextMonthDate = new Date(realYear, realMonth, 1) // month es 0-indexed → ya es el mes siguiente
+  pushPeriod(nextMonthDate.getFullYear(), nextMonthDate.getMonth() + 1)
+  // Pivote también, por si está en una posición rara (ej. usuario eligió un período viejo no contable).
+  pushPeriod(pivotYear, pivotMonth)
+  availablePeriods.sort((a, b) => (b.year - a.year) * 100 + (b.month - a.month))
+
+  const isFuturePeriod =
+    pivotYear > realYear || (pivotYear === realYear && pivotMonth > realMonth)
 
   return {
     propertyId,
@@ -3107,6 +3375,9 @@ export async function getIAdminMonthlyGrid(
     activeUnitsCount,
     totalAlicuota: Math.round(totalAlicuota * 1000000) / 1000000,
     readyToEmit,
+    selectedPeriod: { year: pivotYear, month: pivotMonth },
+    availablePeriods,
+    isFuturePeriod,
   }
 }
 
@@ -3375,4 +3646,44 @@ export function getCategoryOptions(promotions: Promotion[]) {
   const categories = new Set<string>(CATEGORIES)
   promotions.forEach((promotion) => categories.add(promotion.category))
   return ['Todas', ...Array.from(categories).filter((category) => category !== 'Todas')]
+}
+
+export async function getIAdminAccountsPayable(
+  propertyId: string,
+): Promise<{ groups: IAdminPayableProviderGroup[]; total: number }> {
+  const rows = await listUnpaidPayableExpensesForPropertyFromPostgres(propertyId)
+
+  const groupMap = new Map<string, IAdminPayableProviderGroup>()
+  for (const row of rows) {
+    const key = row.provider_id ?? 'no-provider'
+    const expense: IAdminPayableExpense = {
+      id: row.id,
+      providerId: row.provider_id,
+      providerName: row.provider_name ?? 'Sin proveedor',
+      description: row.description,
+      category: row.category,
+      status: row.status,
+      amount: Number(row.amount),
+      issuedAt: row.issued_at,
+      documentType: row.document_type,
+      documentNumber: row.document_number,
+    }
+    const group = groupMap.get(key) ?? {
+      providerId: row.provider_id,
+      providerName: row.provider_name ?? 'Sin proveedor',
+      totalAmount: 0,
+      oldestDate: null,
+      expenses: [],
+    }
+    group.totalAmount = Math.round((group.totalAmount + expense.amount) * 100) / 100
+    group.expenses.push(expense)
+    if (expense.issuedAt && (!group.oldestDate || expense.issuedAt < group.oldestDate)) {
+      group.oldestDate = expense.issuedAt
+    }
+    groupMap.set(key, group)
+  }
+
+  const groups = Array.from(groupMap.values()).sort((a, b) => b.totalAmount - a.totalAmount)
+  const total = Math.round(groups.reduce((s, g) => s + g.totalAmount, 0) * 100) / 100
+  return { groups, total }
 }

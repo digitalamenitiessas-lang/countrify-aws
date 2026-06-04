@@ -167,7 +167,7 @@ export function PublishDialog({
                 Período {result.periodLabel}
               </h2>
               <p className="text-sm text-muted-foreground mt-0.5">
-                Ya está calculada y lista para avisar. Los residentes pueden ver su detalle con el link personalizado.
+                Ya está calculada y lista para avisar. Los vecinos pueden ver su detalle con el link personalizado.
               </p>
             </div>
           </div>
@@ -252,7 +252,7 @@ export function PublishDialog({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar vecino o unidad…"
-              className="w-full text-xs pl-8 pr-2 py-1.5 rounded-full border border-border/50 bg-background focus:outline-none focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(17, 34, 80,0.08)] transition-shadow"
+              className="w-full text-xs pl-8 pr-2 py-1.5 rounded-full border border-border/50 bg-background focus:outline-none focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(240, 78, 35,0.08)] transition-shadow"
             />
           </div>
           <div className="flex-1" />
@@ -276,7 +276,7 @@ export function PublishDialog({
           </div>
         </div>
 
-        {/* Lista de residentes */}
+        {/* Lista de vecinos */}
         <div className="flex-1 overflow-y-auto px-3 py-2">
           {withoutContact.length > 0 && filter === 'all' ? (
             <div className="mx-3 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
@@ -286,7 +286,7 @@ export function PublishDialog({
 
           {filtered.length === 0 ? (
             <div className="py-10 text-center text-sm text-muted-foreground">
-              Sin residentes que coincidan con este filtro.
+              Sin vecinos que coincidan con este filtro.
             </div>
           ) : (
             <ul className="space-y-1">

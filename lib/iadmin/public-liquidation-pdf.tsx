@@ -26,13 +26,11 @@ function formatDateAr(s: string): string {
   return `${m[3]}/${m[2]}/${m[1]}`
 }
 
-const NAVY = '#112250'
+const ORANGE = '#F04E23'
 const DARK = '#1A1A1A'
 const MUTED = '#666666'
 const BORDER = '#E2E2E2'
 const SOFT_BG = '#FAFAFA'
-const SAND = '#FFF8EC'
-const SAND_BORDER = '#F2DBA8'
 
 const styles = StyleSheet.create({
   page: {
@@ -52,7 +50,7 @@ const styles = StyleSheet.create({
   },
   brandLabel: {
     fontSize: 8,
-    color: NAVY,
+    color: ORANGE,
     textTransform: 'uppercase',
     letterSpacing: 1,
     marginBottom: 4,
@@ -81,9 +79,9 @@ const styles = StyleSheet.create({
   },
   metaValue: { fontSize: 10, fontFamily: 'Helvetica-Bold' },
   amountHero: {
-    backgroundColor: SAND,
+    backgroundColor: '#FFF6F2',
     borderWidth: 1,
-    borderColor: SAND_BORDER,
+    borderColor: '#F2C9B8',
     borderRadius: 8,
     padding: 14,
     marginBottom: 14,
@@ -171,6 +169,9 @@ export function PublicLiquidationPdf({ view }: { view: PublicLiquidationView }) 
   const monthLabel = MONTH_NAMES[view.periodMonth - 1] ?? ''
   const isPaid = view.balanceRemaining < 0.01 && view.subtotal > 0
   const bank = view.legalInfo.bank
+  const aliasValue = bank?.alias
+  const hasBreakdown =
+    view.expenseBreakdown.ordinary.length > 0 || view.expenseBreakdown.extraordinary.length > 0
 
   return (
     <Document
@@ -245,6 +246,39 @@ export function PublicLiquidationPdf({ view }: { view: PublicLiquidationView }) 
           ) : null}
         </View>
 
+        {/* En qué se gastó (composición por rubro, prorrateada a la unidad) */}
+        {hasBreakdown ? (
+          <>
+            <Text style={styles.sectionTitle}>¿En qué se gastó?</Text>
+            {view.expenseBreakdown.ordinary.length > 0 ? (
+              <>
+                <Text style={{ fontSize: 8, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 }}>
+                  Ordinarias
+                </Text>
+                {view.expenseBreakdown.ordinary.map((r, idx) => (
+                  <View key={`ord-${idx}`} style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>{r.category}</Text>
+                    <Text style={styles.detailValue}>{formatARS(r.amount)}</Text>
+                  </View>
+                ))}
+              </>
+            ) : null}
+            {view.expenseBreakdown.extraordinary.length > 0 ? (
+              <>
+                <Text style={{ fontSize: 8, color: MUTED, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3, marginTop: 6 }}>
+                  Extraordinarias
+                </Text>
+                {view.expenseBreakdown.extraordinary.map((r, idx) => (
+                  <View key={`ext-${idx}`} style={styles.detailRow}>
+                    <Text style={styles.detailLabel}>{r.category}</Text>
+                    <Text style={styles.detailValue}>{formatARS(r.amount)}</Text>
+                  </View>
+                ))}
+              </>
+            ) : null}
+          </>
+        ) : null}
+
         {/* Vencimientos */}
         {view.dueDates.length > 0 ? (
           <>
@@ -294,7 +328,7 @@ export function PublicLiquidationPdf({ view }: { view: PublicLiquidationView }) 
         ) : null}
 
         {/* Datos bancarios */}
-        {bank && (bank.name || bank.cbu || bank.alias || bank.account) ? (
+        {bank && (bank.name || bank.cbu || aliasValue || bank.account) ? (
           <>
             <Text style={styles.sectionTitle}>Cómo pagar</Text>
             <View style={styles.bankBlock}>
@@ -310,10 +344,10 @@ export function PublicLiquidationPdf({ view }: { view: PublicLiquidationView }) 
                   <Text style={styles.detailValue}>{bank.cbu}</Text>
                 </View>
               ) : null}
-              {bank.alias ? (
+              {aliasValue ? (
                 <View style={styles.detailRow}>
                   <Text style={styles.detailLabel}>Alias</Text>
-                  <Text style={styles.detailValue}>{bank.alias}</Text>
+                  <Text style={styles.detailValue}>{aliasValue}</Text>
                 </View>
               ) : null}
               {bank.account ? (

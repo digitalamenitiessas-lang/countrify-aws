@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from 'react'
 import Link from 'next/link'
-import { ChevronDown, ChevronRight, FileSpreadsheet, Pencil, Sparkles, UploadCloud, UserPlus, UserX } from 'lucide-react'
+import { ChevronDown, ChevronRight, FileSpreadsheet, Pencil, Sparkles, UploadCloud, UserCheck, UserPlus, Users, UserX } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import type { IAdminHolderKind, IAdminLinkableProfile, IAdminUnitKind, IAdminUnitWithHolders } from '@/lib/types'
 import {
+  createAccessForHolder,
   createUnitUser,
   createUnit,
   createUnitHolder,
@@ -54,8 +55,7 @@ const HOLDER_KIND_OPTIONS: Array<{ value: IAdminHolderKind; label: string }> = [
 ]
 
 const UNIT_USER_OPTIONS = [
-  { value: 'propietario', label: 'Propietario' },
-  { value: 'vecino_principal', label: 'Vecino principal' },
+  { value: 'vecino_principal', label: 'Vecino principal (responsable de pago)' },
   { value: 'vecino_adicional', label: 'Vecino adicional / familia' },
 ] as const
 
@@ -118,6 +118,8 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
   const [expandedUnitId, setExpandedUnitId] = useState<string | null>(null)
   const [addingHolderFor, setAddingHolderFor] = useState<string | null>(null)
   const [addingUserFor, setAddingUserFor] = useState<string | null>(null)
+  // Contacto (holder) para el que se está por crear el acceso/login.
+  const [accessDraft, setAccessDraft] = useState<{ holderId: string; isResponsableDePago: boolean } | null>(null)
   const [holderDraft, setHolderDraft] = useState({
     fullName: '',
     holderKind: 'propietario' as IAdminHolderKind,
@@ -128,19 +130,19 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
     replaceActive: true,
   })
   const [userDraft, setUserDraft] = useState({
-    relationshipType: 'propietario' as (typeof UNIT_USER_OPTIONS)[number]['value'],
+    relationshipType: 'vecino_principal' as (typeof UNIT_USER_OPTIONS)[number]['value'],
+    holderKind: 'propietario' as IAdminHolderKind,
     fullName: '',
     email: '',
     phone: '',
     password: 'Countrify2026!',
     isPrimaryOwner: true,
   })
-  const [userFormMode, setUserFormMode] = useState<'link' | 'create'>('link')
   const [linkDraft, setLinkDraft] = useState({
-    profileId: '',
     search: '',
-    relationshipType: 'propietario' as (typeof UNIT_USER_OPTIONS)[number]['value'],
-    isPrimaryOwner: true,
+    profileId: '',
+    relationshipType: 'vecino_principal' as (typeof UNIT_USER_OPTIONS)[number]['value'],
+    isPrimaryOwner: false,
   })
 
   function submitNewUnit(event: React.FormEvent<HTMLFormElement>) {
@@ -251,27 +253,22 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
 
   function resetUserDraft() {
     setUserDraft({
-      relationshipType: 'propietario',
+      relationshipType: 'vecino_principal',
+      holderKind: 'propietario',
       fullName: '',
       email: '',
       phone: '',
       password: 'Countrify2026!',
       isPrimaryOwner: true,
     })
-    setLinkDraft({
-      profileId: '',
-      search: '',
-      relationshipType: 'propietario',
-      isPrimaryOwner: true,
-    })
-    setUserFormMode(linkableProfiles.length > 0 ? 'link' : 'create')
+    setLinkDraft({ search: '', profileId: '', relationshipType: 'vecino_principal', isPrimaryOwner: false })
     setAddingUserFor(null)
   }
 
   function submitLinkExisting(event: React.FormEvent<HTMLFormElement>, unitId: string) {
     event.preventDefault()
     if (!linkDraft.profileId) {
-      toast.error('Eligi un vecino del listado')
+      toast.error('Seleccioná un vecino')
       return
     }
     startTransition(async () => {
@@ -297,6 +294,7 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
         await createUnitUser({
           unitId,
           relationshipType: userDraft.relationshipType,
+          holderKind: userDraft.holderKind,
           fullName: userDraft.fullName.trim(),
           email: userDraft.email.trim(),
           phone: userDraft.phone.trim() || null,
@@ -305,6 +303,23 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
         })
         toast.success('Usuario vinculado a la unidad')
         resetUserDraft()
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Error')
+      }
+    })
+  }
+
+  function submitCreateAccess() {
+    if (!accessDraft) return
+    const draft = accessDraft
+    startTransition(async () => {
+      try {
+        await createAccessForHolder({
+          holderId: draft.holderId,
+          isResponsableDePago: draft.isResponsableDePago,
+        })
+        toast.success('Acceso creado: se envió la contraseña temporal por mail')
+        setAccessDraft(null)
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Error')
       }
@@ -363,24 +378,56 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
   return (
     <>
     <div className="space-y-4">
+      {totalProrata > 1.0001 ? (
+        <div className="rounded-lg border-2 border-rose-400 bg-rose-50 p-4 text-sm text-rose-900">
+          <div className="font-semibold mb-1">⛔ Alícuotas superan 100% ({(totalProrata * 100).toFixed(2)}%)</div>
+          <p className="text-xs">
+            El sistema bloquea cargar gastos, emitir liquidaciones y registrar cobranzas hasta que las
+            alícuotas de las unidades activas sumen como máximo 100%. Editá las unidades de abajo para corregirlo.
+          </p>
+        </div>
+      ) : null}
       <div className="flex items-center justify-between">
         <div className="text-xs text-muted-foreground">
-          {units.length} unidades · suma de alicuotas activas: <span className="font-medium tabular-nums">{(totalProrata * 100).toFixed(2)}%</span>
-          {totalProrata > 0 && Math.abs(totalProrata - 1) > 0.001 ? (
+          {units.length} unidades · suma de alicuotas activas:{' '}
+          <span
+            className={`font-medium tabular-nums ${
+              totalProrata > 1.0001 ? 'text-rose-700' : ''
+            }`}
+          >
+            {(totalProrata * 100).toFixed(2)}%
+          </span>
+          {totalProrata > 1.0001 ? (
+            <span className="ml-2 text-rose-700 font-semibold">⛔ supera 100%</span>
+          ) : totalProrata > 0 && Math.abs(totalProrata - 1) > 0.001 ? (
             <span className="ml-2 text-amber-700">⚠ deberia sumar 100%</span>
           ) : null}
         </div>
-        {canManageUnits && !creating ? (
+        {(canManageUnits || canManageHolders) && !creating ? (
           <div className="flex items-center gap-2 flex-wrap">
-            <Link
-              href={`/iadmin/consorcios/${propertyId}/importar`}
-              className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
-              title="Subir Excel/CSV con todas las unidades de una vez"
-            >
-              <FileSpreadsheet className="w-3.5 h-3.5" />
-              Importar Excel
-            </Link>
-            <Button size="sm" onClick={() => setCreating(true)}>Nueva unidad</Button>
+            {canManageUnits ? (
+              <Link
+                href={`/iadmin/consorcios/${propertyId}/importar`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
+                title="Subir Excel/CSV con todas las unidades de una vez"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                Importar Excel
+              </Link>
+            ) : null}
+            {canManageHolders ? (
+              <Link
+                href={`/iadmin/consorcios/${propertyId}/vecinos-masivo`}
+                className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-3 py-1.5 text-sm font-medium hover:bg-muted transition-colors"
+                title="Cargar vecinos pegando una tabla (unidad, nombre, email, relación)"
+              >
+                <Users className="w-3.5 h-3.5" />
+                Carga masiva de vecinos
+              </Link>
+            ) : null}
+            {canManageUnits ? (
+              <Button size="sm" onClick={() => setCreating(true)}>Nueva unidad</Button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -446,6 +493,7 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
             {units.map((unit) => {
               const isExpanded = expandedUnitId === unit.id
               const activeHolders = unit.holders.filter((h) => h.isActive)
+              const activeMemberships = unit.memberships.filter((m) => m.active)
               const isEditing = editingUnitId === unit.id
               const isAddingHolder = addingHolderFor === unit.id
               const isAddingUser = addingUserFor === unit.id
@@ -460,16 +508,32 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                       {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                     </button>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-medium text-foreground">{unit.code}</span>
                         <span className="text-xs text-muted-foreground capitalize">{unit.kind}</span>
                         {!unit.isActive ? <span className="text-xs bg-muted px-1.5 py-0.5 rounded">inactiva</span> : null}
+                        {activeMemberships.length > 0 ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800 border border-emerald-200">
+                            <UserCheck className="w-2.5 h-2.5" />
+                            {activeMemberships.length} usuario{activeMemberships.length === 1 ? '' : 's'}
+                          </span>
+                        ) : null}
                       </div>
-                      <div className="text-xs text-muted-foreground mt-0.5">
-                        {activeHolders.length > 0
-                          ? activeHolders.map((h) => `${h.holderKind}: ${h.fullName}`).join(' · ')
-                          : 'sin titulares activos'}
-                      </div>
+                      {activeHolders.length > 0 ? (
+                        <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-xs">
+                          {activeHolders.map((h) => (
+                            <span key={h.id} className="text-muted-foreground">
+                              <span className="capitalize text-foreground/70">{h.holderKind}</span>
+                              {': '}
+                              <span className="text-foreground">{h.fullName}</span>
+                              {h.email ? <span className="text-muted-foreground/70"> · {h.email}</span> : null}
+                              {h.phone ? <span className="text-muted-foreground/70"> · {h.phone}</span> : null}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-0.5 text-xs text-muted-foreground italic">sin titulares activos</div>
+                      )}
                     </div>
                     <div className="text-xs text-muted-foreground tabular-nums shrink-0">
                       {unit.prorataCoefficient !== null ? `${(unit.prorataCoefficient * 100).toFixed(2)}%` : '—'}
@@ -541,26 +605,72 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                         ) : (
                           <ul className="space-y-1.5">
                             {unit.holders.map((h) => (
-                              <li key={h.id} className="flex items-center justify-between text-xs rounded-md bg-background px-3 py-2 border border-border/40">
-                                <div>
-                                  <div className="font-medium text-foreground">
-                                    {h.fullName} <span className="text-muted-foreground capitalize font-normal">· {h.holderKind}</span>
+                              <li key={h.id} className="text-xs rounded-md bg-background px-3 py-2 border border-border/40">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="min-w-0">
+                                    <div className="font-medium text-foreground flex items-center gap-1.5 flex-wrap">
+                                      <span>
+                                        {h.fullName} <span className="text-muted-foreground capitalize font-normal">· {h.holderKind}</span>
+                                      </span>
+                                      {h.profileId ? (
+                                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800 border border-emerald-200">
+                                          <UserCheck className="w-2.5 h-2.5" /> con usuario
+                                        </span>
+                                      ) : h.isActive ? (
+                                        <span className="inline-flex items-center rounded-full bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground border border-border/40">
+                                          sin usuario
+                                        </span>
+                                      ) : null}
+                                    </div>
+                                    <div className="text-muted-foreground">
+                                      {h.isActive ? (
+                                        <>desde {h.startDate ?? '—'}</>
+                                      ) : (
+                                        <>del {h.startDate ?? '—'} al {h.endDate ?? '—'}</>
+                                      )}
+                                      {h.email ? ` · ${h.email}` : ''}
+                                      {h.phone ? ` · ${h.phone}` : ''}
+                                    </div>
                                   </div>
-                                  <div className="text-muted-foreground">
-                                    {h.isActive ? (
-                                      <>desde {h.startDate ?? '—'}</>
-                                    ) : (
-                                      <>del {h.startDate ?? '—'} al {h.endDate ?? '—'}</>
-                                    )}
-                                    {h.email ? ` · ${h.email}` : ''}
-                                    {h.phone ? ` · ${h.phone}` : ''}
+                                  <div className="flex items-center gap-1 shrink-0">
+                                    {h.isActive && canManageHolders && !h.profileId && h.email && accessDraft?.holderId !== h.id ? (
+                                      <Button size="sm" variant="outline" disabled={pending} onClick={() => setAccessDraft({ holderId: h.id, isResponsableDePago: false })}>
+                                        <UserPlus className="w-3.5 h-3.5 mr-1" />
+                                        Crear acceso
+                                      </Button>
+                                    ) : null}
+                                    {h.isActive && canManageHolders ? (
+                                      <Button size="sm" variant="ghost" disabled={pending} onClick={() => handleEndHolder(h.id)}>
+                                        <UserX className="w-3.5 h-3.5 mr-1" />
+                                        Finalizar
+                                      </Button>
+                                    ) : null}
                                   </div>
                                 </div>
-                                {h.isActive && canManageHolders ? (
-                                  <Button size="sm" variant="ghost" disabled={pending} onClick={() => handleEndHolder(h.id)}>
-                                    <UserX className="w-3.5 h-3.5 mr-1" />
-                                    Finalizar
-                                  </Button>
+                                {h.isActive && canManageHolders && !h.profileId && !h.email ? (
+                                  <div className="mt-1.5 text-[11px] text-muted-foreground italic">
+                                    Agregá un email a este contacto para poder crearle un usuario.
+                                  </div>
+                                ) : null}
+                                {accessDraft?.holderId === h.id ? (
+                                  <div className="mt-2 rounded-md border border-border/50 bg-muted/30 p-2 space-y-2">
+                                    <p className="text-[11px] text-muted-foreground">
+                                      Se creará un usuario para <b className="text-foreground">{h.email}</b> con una contraseña
+                                      temporal enviada por mail. En el primer ingreso deberá cambiarla.
+                                    </p>
+                                    <label className="flex items-center gap-2 text-xs text-foreground">
+                                      <input
+                                        type="checkbox"
+                                        checked={accessDraft.isResponsableDePago}
+                                        onChange={(e) => setAccessDraft({ holderId: h.id, isResponsableDePago: e.target.checked })}
+                                      />
+                                      Responsable de pago (vecino principal de la unidad)
+                                    </label>
+                                    <div className="flex justify-end gap-2">
+                                      <Button type="button" size="sm" variant="ghost" disabled={pending} onClick={() => setAccessDraft(null)}>Cancelar</Button>
+                                      <Button type="button" size="sm" disabled={pending} onClick={submitCreateAccess}>Crear acceso</Button>
+                                    </div>
+                                  </div>
                                 ) : null}
                               </li>
                             ))}
@@ -626,20 +736,13 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                       <div>
                         <div className="flex items-center justify-between mb-2">
                           <div>
-                            <h4 className="text-sm font-medium text-foreground">Usuarios Countrify de la unidad</h4>
+                            <h4 className="text-sm font-medium text-foreground">Usuarios CITIFY de la unidad</h4>
                             <p className="text-xs text-muted-foreground">
                               Vincula propietario, vecino principal y hasta 4 familiares/convivientes.
                             </p>
                           </div>
                           {canManageHolders && !isAddingUser ? (
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setUserFormMode(linkableProfiles.length > 0 ? 'link' : 'create')
-                                setAddingUserFor(unit.id)
-                              }}
-                            >
+                            <Button size="sm" variant="outline" onClick={() => setAddingUserFor(unit.id)}>
                               <UserPlus className="w-3.5 h-3.5 mr-1" />
                               Agregar usuario
                             </Button>
@@ -647,7 +750,7 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                         </div>
 
                         {unit.memberships.length === 0 && !isAddingUser ? (
-                          <div className="text-xs text-muted-foreground italic">No hay usuarios Countrify vinculados.</div>
+                          <div className="text-xs text-muted-foreground italic">No hay usuarios CITIFY vinculados.</div>
                         ) : (
                           <ul className="space-y-1.5">
                             {unit.memberships.map((membership) => (
@@ -680,105 +783,116 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                         )}
 
                         {isAddingUser ? (
-                          <div className="mt-3 rounded-lg border border-border/40 p-3 space-y-3">
-                            <div className="flex gap-2 text-xs">
-                              <button
-                                type="button"
-                                onClick={() => setUserFormMode('link')}
-                                disabled={linkableProfiles.length === 0}
-                                className={`px-3 py-1.5 rounded-md border ${userFormMode === 'link' ? 'bg-primary text-primary-foreground border-primary' : 'border-border/40 text-muted-foreground'} disabled:opacity-40`}
-                              >
-                                Vincular vecino existente ({linkableProfiles.length})
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => setUserFormMode('create')}
-                                className={`px-3 py-1.5 rounded-md border ${userFormMode === 'create' ? 'bg-primary text-primary-foreground border-primary' : 'border-border/40 text-muted-foreground'}`}
-                              >
-                                Crear nuevo
-                              </button>
-                            </div>
-
-                            {userFormMode === 'link' ? (
-                              <form onSubmit={(e) => submitLinkExisting(e, unit.id)} className="space-y-3">
-                                <div className="space-y-1.5">
-                                  <Label>Buscar vecino</Label>
-                                  <Input
-                                    placeholder="Nombre o email"
-                                    value={linkDraft.search}
-                                    onChange={(e) => setLinkDraft({ ...linkDraft, search: e.target.value })}
-                                  />
-                                </div>
-                                <div className="space-y-1.5">
-                                  <Label>Vecino</Label>
-                                  <select
-                                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                    value={linkDraft.profileId}
-                                    onChange={(e) => setLinkDraft({ ...linkDraft, profileId: e.target.value })}
-                                    required
-                                  >
-                                    <option value="">Seleccionar vecino...</option>
-                                    {linkableProfiles
-                                      .filter((p) => {
-                                        const q = linkDraft.search.trim().toLowerCase()
-                                        if (!q) return true
-                                        return p.fullName.toLowerCase().includes(q) || p.email.toLowerCase().includes(q)
-                                      })
-                                      .map((p) => {
-                                        const origin = p.sameBuilding
-                                          ? 'este consorcio'
-                                          : p.currentBuildingName
-                                            ? `viene de ${p.currentBuildingName}`
-                                            : 'sin consorcio asignado'
-                                        const usage = p.activeMembershipsCount === 0 ? 'sin unidad' : `${p.activeMembershipsCount} unidad(es)`
+                          <div className="mt-3 space-y-4 rounded-lg border border-border/40 p-3">
+                            <form onSubmit={(e) => submitLinkExisting(e, unit.id)} className="space-y-3">
+                              <div className="text-sm font-medium">Vincular vecino existente</div>
+                              <div className="space-y-1.5">
+                                <Label>Buscar por nombre o email</Label>
+                                <Input
+                                  value={linkDraft.search}
+                                  onChange={(e) => setLinkDraft({ ...linkDraft, search: e.target.value, profileId: '' })}
+                                  placeholder="Tipear para filtrar..."
+                                />
+                                {(() => {
+                                  const term = linkDraft.search.trim().toLowerCase()
+                                  const filtered = linkableProfiles
+                                    .filter((p) => {
+                                      if (!term) return true
+                                      return (
+                                        p.fullName.toLowerCase().includes(term) ||
+                                        p.email.toLowerCase().includes(term)
+                                      )
+                                    })
+                                    .slice(0, 8)
+                                  if (linkableProfiles.length === 0) {
+                                    return (
+                                      <p className="text-xs text-muted-foreground">
+                                        No hay vecinos del consorcio disponibles. Crealos desde el panel superadmin o usá el form de abajo.
+                                      </p>
+                                    )
+                                  }
+                                  if (filtered.length === 0) {
+                                    return <p className="text-xs text-muted-foreground">Sin resultados.</p>
+                                  }
+                                  return (
+                                    <ul className="max-h-44 overflow-auto rounded-md border border-border/40 divide-y divide-border/40">
+                                      {filtered.map((p) => {
+                                        const selected = linkDraft.profileId === p.id
+                                        const badge =
+                                          p.activeMembershipsCount === 0
+                                            ? 'sin unidad'
+                                            : `${p.activeMembershipsCount} unidad${p.activeMembershipsCount === 1 ? '' : 'es'}`
                                         return (
-                                          <option key={p.id} value={p.id}>
-                                            {p.fullName} · {p.email} · {origin} · {usage}
-                                          </option>
+                                          <li key={p.id}>
+                                            <button
+                                              type="button"
+                                              onClick={() => setLinkDraft({ ...linkDraft, profileId: p.id })}
+                                              className={`w-full text-left px-3 py-2 text-sm hover:bg-muted/40 ${selected ? 'bg-muted/60' : ''}`}
+                                            >
+                                              <div className="font-medium">{p.fullName}</div>
+                                              <div className="text-xs text-muted-foreground">
+                                                {p.email} · {badge} · {p.role}
+                                              </div>
+                                            </button>
+                                          </li>
                                         )
                                       })}
+                                    </ul>
+                                  )
+                                })()}
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                <div className="space-y-1.5">
+                                  <Label>Tipo de vinculo</Label>
+                                  <select
+                                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                    value={linkDraft.relationshipType}
+                                    onChange={(e) =>
+                                      setLinkDraft({
+                                        ...linkDraft,
+                                        relationshipType: e.target.value as typeof linkDraft.relationshipType,
+                                      })
+                                    }
+                                  >
+                                    {UNIT_USER_OPTIONS.map((opt) => (
+                                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                    ))}
                                   </select>
                                 </div>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                                  <div className="space-y-1.5">
-                                    <Label>Tipo de vinculo</Label>
-                                    <select
-                                      className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                                      value={linkDraft.relationshipType}
-                                      onChange={(e) => setLinkDraft({ ...linkDraft, relationshipType: e.target.value as typeof linkDraft.relationshipType })}
-                                    >
-                                      {UNIT_USER_OPTIONS.map((opt) => (
-                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  {linkDraft.relationshipType === 'propietario' ? (
-                                    <label className="flex items-center gap-2 text-xs text-muted-foreground self-end pb-2">
-                                      <input
-                                        type="checkbox"
-                                        checked={linkDraft.isPrimaryOwner}
-                                        onChange={(e) => setLinkDraft({ ...linkDraft, isPrimaryOwner: e.target.checked })}
-                                      />
-                                      Propietario principal de la unidad
-                                    </label>
-                                  ) : null}
-                                </div>
-                                <div className="flex justify-end gap-2">
-                                  <Button type="button" size="sm" variant="ghost" onClick={resetUserDraft}>Cancelar</Button>
-                                  <Button type="submit" size="sm" disabled={pending}>Vincular</Button>
-                                </div>
-                              </form>
-                            ) : (
+                              </div>
+                              <div className="flex justify-end">
+                                <Button type="submit" size="sm" disabled={pending || !linkDraft.profileId}>Vincular</Button>
+                              </div>
+                            </form>
+                            <div className="relative">
+                              <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-border/40" /></div>
+                              <div className="relative flex justify-center text-[10px] uppercase tracking-wider"><span className="bg-background px-2 text-muted-foreground">o crear nuevo</span></div>
+                            </div>
                           <form onSubmit={(e) => submitUnitUser(e, unit.id)} className="space-y-3">
+                            <p className="text-[11px] text-muted-foreground">
+                              Crea el contacto y su usuario en un paso. Si ya cargaste el contacto, usá <b>Crear acceso</b> en la lista de titulares para no repetir datos.
+                            </p>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div className="space-y-1.5">
-                                <Label>Tipo de vinculo</Label>
+                                <Label>Responsable de pago</Label>
                                 <select
                                   className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                                   value={userDraft.relationshipType}
                                   onChange={(e) => setUserDraft({ ...userDraft, relationshipType: e.target.value as typeof userDraft.relationshipType })}
                                 >
                                   {UNIT_USER_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Vínculo legal con la unidad</Label>
+                                <select
+                                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                                  value={userDraft.holderKind}
+                                  onChange={(e) => setUserDraft({ ...userDraft, holderKind: e.target.value as IAdminHolderKind })}
+                                >
+                                  {HOLDER_KIND_OPTIONS.map((opt) => (
                                     <option key={opt.value} value={opt.value}>{opt.label}</option>
                                   ))}
                                 </select>
@@ -799,23 +913,12 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
                                 <Label>Password temporal</Label>
                                 <Input value={userDraft.password} onChange={(e) => setUserDraft({ ...userDraft, password: e.target.value })} required />
                               </div>
-                              {userDraft.relationshipType === 'propietario' ? (
-                                <label className="flex items-center gap-2 text-xs text-muted-foreground self-end pb-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={userDraft.isPrimaryOwner}
-                                    onChange={(e) => setUserDraft({ ...userDraft, isPrimaryOwner: e.target.checked })}
-                                  />
-                                  Propietario principal de la unidad
-                                </label>
-                              ) : null}
                             </div>
                             <div className="flex justify-end gap-2">
                               <Button type="button" size="sm" variant="ghost" onClick={resetUserDraft}>Cancelar</Button>
                               <Button type="submit" size="sm" disabled={pending}>Crear y vincular</Button>
                             </div>
                           </form>
-                            )}
                           </div>
                         ) : null}
                       </div>

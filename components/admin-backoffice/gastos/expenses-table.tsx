@@ -5,6 +5,8 @@ import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import type { IAdminExpenseStatus, IAdminExpenseSummary } from '@/lib/types'
 import { Money } from '@/components/admin-backoffice/shared/money'
+import { PeriodPicker } from '@/components/admin-backoffice/shared/period-picker'
+import { RepeatPreviousMonthButton } from '@/components/admin-backoffice/gastos/repeat-previous-month-button'
 
 const EXPENSE_STATUS_LABELS: Record<IAdminExpenseStatus, string> = {
   draft: 'Borrador',
@@ -34,12 +36,21 @@ const FILTERS: ReadonlyArray<{ value: 'all' | IAdminExpenseStatus; label: string
   { value: 'rejected', label: 'Rechazados' },
 ]
 
-export function ExpensesTable({ expenses }: { expenses: IAdminExpenseSummary[] }) {
+export function ExpensesTable({
+  expenses,
+  repeatPropertyId,
+}: {
+  expenses: IAdminExpenseSummary[]
+  /** Si hay un consorcio activo, habilita repetir gastos del mes anterior en el período filtrado. */
+  repeatPropertyId?: string | null
+}) {
   const searchParams = useSearchParams()
   const initialStatus = (searchParams?.get('status') as IAdminExpenseStatus | 'all' | null) ?? 'all'
   const [statusFilter, setStatusFilter] = useState<'all' | IAdminExpenseStatus>(
     isValidStatus(initialStatus) ? initialStatus : 'all',
   )
+  // Filtro de período: null = todos, o { year, month }
+  const [periodFilter, setPeriodFilter] = useState<{ year: number; month: number } | null>(null)
 
   // Si cambia el query param desde afuera, sincronizar.
   useEffect(() => {
@@ -47,29 +58,79 @@ export function ExpensesTable({ expenses }: { expenses: IAdminExpenseSummary[] }
     if (s && isValidStatus(s)) setStatusFilter(s as 'all' | IAdminExpenseStatus)
   }, [searchParams])
 
-  const counts = useMemo(() => {
-    const map: Record<string, number> = { all: expenses.length }
+  // Lista única de períodos presentes.
+  const periodOptions = useMemo(() => {
+    const seen = new Set<string>()
+    const options: { year: number; month: number }[] = []
     for (const e of expenses) {
+      if (e.periodYear == null || e.periodMonth == null) continue
+      const key = `${e.periodYear}-${e.periodMonth}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      options.push({ year: e.periodYear, month: e.periodMonth })
+    }
+    return options
+  }, [expenses])
+
+  const periodFiltered = useMemo(() => {
+    if (periodFilter === null) return expenses
+    return expenses.filter(
+      (e) => e.periodYear === periodFilter.year && e.periodMonth === periodFilter.month,
+    )
+  }, [expenses, periodFilter])
+
+  const counts = useMemo(() => {
+    const map: Record<string, number> = { all: periodFiltered.length }
+    for (const e of periodFiltered) {
       map[e.status] = (map[e.status] ?? 0) + 1
     }
     return map
-  }, [expenses])
+  }, [periodFiltered])
 
   const filtered = useMemo(() => {
-    if (statusFilter === 'all') return expenses
-    return expenses.filter((e) => e.status === statusFilter)
-  }, [expenses, statusFilter])
+    if (statusFilter === 'all') return periodFiltered
+    return periodFiltered.filter((e) => e.status === statusFilter)
+  }, [periodFiltered, statusFilter])
 
   if (expenses.length === 0) {
+    const now = new Date()
     return (
-      <div className="glass-card rounded-2xl px-5 py-12 text-center text-sm text-muted-foreground">
-        No hay gastos cargados todavía.
+      <div className="glass-card rounded-2xl px-5 py-12 text-center text-sm text-muted-foreground space-y-4">
+        <p>No hay gastos cargados todavía.</p>
+        {repeatPropertyId ? (
+          <div className="flex justify-center">
+            <RepeatPreviousMonthButton
+              managedPropertyId={repeatPropertyId}
+              targetYear={now.getFullYear()}
+              targetMonth={now.getMonth() + 1}
+              targetHasExpenses={false}
+            />
+          </div>
+        ) : null}
       </div>
     )
   }
 
   return (
     <div className="space-y-3">
+      <div className="flex items-center gap-2 flex-wrap">
+        <PeriodPicker
+          label="Período"
+          value={periodFilter}
+          onChange={setPeriodFilter}
+          availablePeriods={periodOptions}
+          allowAll
+          allLabel="Todos"
+        />
+        {repeatPropertyId && periodFilter ? (
+          <RepeatPreviousMonthButton
+            managedPropertyId={repeatPropertyId}
+            targetYear={periodFilter.year}
+            targetMonth={periodFilter.month}
+            targetHasExpenses={periodFiltered.length > 0}
+          />
+        ) : null}
+      </div>
       <div className="flex items-center gap-1.5 flex-wrap">
         {FILTERS.map((f) => {
           const isActive = statusFilter === f.value
@@ -126,6 +187,9 @@ export function ExpensesTable({ expenses }: { expenses: IAdminExpenseSummary[] }
                     </Link>
                     <div className="text-xs text-muted-foreground mt-0.5">
                       {expense.issuedAt ?? expense.createdAt.slice(0, 10)}
+                      {expense.periodYear && expense.periodMonth
+                        ? ` · Imp. ${String(expense.periodMonth).padStart(2, '0')}/${expense.periodYear}`
+                        : ''}
                       {expense.pendingExtraction ? ' · doc por validar' : ''}
                     </div>
                   </td>

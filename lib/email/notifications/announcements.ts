@@ -14,11 +14,10 @@ function deepLinkForRole(role: string, announcementId: string): string {
   return `${SITE_URL}/usuario?view=announcements&id=${encodeURIComponent(announcementId)}`
 }
 
-// notifyAnnouncementPublished: dispara mail a todos los vecinos del building.
-// Best-effort: errores capturados adentro para no bloquear el publish action.
-// Sin dedup todavia (Countrify no tiene email_notifications table). Si el
-// admin re-publica editando, hoy NO disparamos mail desde update (solo desde
-// insert), asi que no hay double-send en la practica.
+// notifyAnnouncementPublished: dispara mail a todos los vecinos +
+// propietarios del building que tengan la preference 'announcements'
+// activa y no esten email_blocked. Best-effort: errores capturados
+// adentro para no bloquear el publish action.
 export async function notifyAnnouncementPublished(announcementId: string): Promise<void> {
   try {
     const ann = await getAnnouncementForEmailFromPostgres(announcementId)
@@ -40,20 +39,21 @@ export async function notifyAnnouncementPublished(announcementId: string): Promi
         pinned: ann.pinned,
         deepLink: deepLinkForRole(r.role, ann.id),
       })
-      const result = await sendNotificationEmail({
+      await sendNotificationEmail({
         templateKey: 'announcement',
         to: { email: r.email, profileId: r.profile_id, fullName: r.full_name },
         subject: tpl.subject,
         html: tpl.html,
         text: tpl.text,
+        preferenceKey: 'announcements',
+        // Dedup por (announcementId, recipient). Si el admin re-publica
+        // editando el comunicado, el helper se llama otra vez pero los
+        // recipients que ya lo recibieron quedan dedupados. Si el admin
+        // quiere re-enviar despues de editar, podemos exponer un boton
+        // explicito "reenviar" mas adelante.
+        idempotencyKey: `announcement:${announcementId}:${r.profile_id}`,
         metadata: { announcementId, buildingId: ann.building_id },
       })
-      if (result.status === 'failed') {
-        console.warn('[email/notifyAnnouncementPublished] send failed', {
-          recipient: r.email,
-          reason: result.reason,
-        })
-      }
     }
   } catch (err) {
     console.error('[email/notifyAnnouncementPublished] failed (non-blocking)', err)

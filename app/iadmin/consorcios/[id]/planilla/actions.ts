@@ -4,12 +4,16 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import { getIAdminUnitAccountStatement } from '@/lib/data'
+import { pgQuery } from '@/lib/db/postgres'
 import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import {
+  applyPaymentToLedgerInPostgres,
+  assertProrataNotOver100,
   bulkInsertLiquidationItemsInPostgres,
   bulkInsertShareTokensInPostgres,
   bulkRevokeShareTokensInPostgres,
   callIAdminNextReceiptNumberInPostgres,
+  createLedgerEntriesForIssuedRunInPostgres,
   deleteBankMovementInPostgres,
   deleteExpenseFromPostgres,
   deleteLiquidationItemsForRunInPostgres,
@@ -17,12 +21,14 @@ import {
   findExpenseInPeriodByProviderFromPostgres,
   findProviderByNameWithRecurringFromPostgres,
   getAccountingPeriodIdAndStatusFromPostgres,
+  getExistingLiquidationRunForPeriodFromPostgres,
   getFirstActiveCashAccountFromPostgres,
   getLiquidationItemByRunUnitFromPostgres,
   getLiquidationRunByPeriodFromPostgres,
   getManagedPropertyAdminIdFromPostgres,
   getManagedPropertyForEmitFromPostgres,
   getProviderNameAndDefaultDescFromPostgres,
+  getRunPaymentStatsFromPostgres,
   insertBankMovementInPostgres,
   insertCollectionPaymentInPostgres,
   insertExpenseInPostgres,
@@ -31,12 +37,14 @@ import {
   listImputedExpensesAmountsByPeriodFromPostgres,
   listLiquidationItemsByRunFromPostgres,
   listLiveShareTokensByItemsFromPostgres,
-  listPriorRunItemsForEmitFromPostgres,
+  materializeLateFeesForAdministrationInPostgres,
   setProviderRecurringInPostgres,
-  sumLivePaymentsByItemIdsFromPostgres,
+  sumOpenLedgerBalanceByUnitForPropertyFromPostgres,
   updateExpenseAmountInPostgres,
   upsertIssuedLiquidationRunInPostgres,
+  voidLedgerEntriesForRunInPostgres,
 } from '@/lib/db/iadmin-writes'
+import { notifyLiquidationIssued } from '@/lib/email/notifications/liquidations'
 import type { IAdminExpenseStatus, IAdminUnitAccountStatement } from '@/lib/types'
 
 const cellSchema = z.object({
@@ -62,6 +70,8 @@ export async function upsertMonthlyCell(
     administrationId: property.administration_id,
   })
 
+  await assertProrataNotOver100(parsed.propertyId)
+
   const existingPeriod = await getAccountingPeriodIdAndStatusFromPostgres({
     managedPropertyId: parsed.propertyId,
     periodYear: parsed.year,
@@ -83,8 +93,31 @@ export async function upsertMonthlyCell(
     periodStatus = 'open'
   }
 
+  const periodLabel = `${String(parsed.month).padStart(2, '0')}/${parsed.year}`
   if (periodStatus === 'closed') {
-    throw new Error('El período del mes está cerrado. Reabrilo desde Liquidaciones para editar.')
+    throw new Error(`El período ${periodLabel} está cerrado. Reabrilo desde Liquidaciones para editar.`)
+  }
+  if (periodStatus === 'locked') {
+    throw new Error(`El período ${periodLabel} está bloqueado. Desbloquealo desde Liquidaciones para editar.`)
+  }
+
+  // Bloqueo: si ya hay una liquidación issued/closed para este período,
+  // no se admiten ediciones (afectaría el cálculo de lo que ya se emitió).
+  const liqRes = await pgQuery<{ status: string }>(
+    `select status::text as status
+       from public.iadmin_liquidation_runs
+      where managed_property_id = $1
+        and accounting_period_id = $2
+        and status in ('issued', 'closed')
+      limit 1`,
+    [parsed.propertyId, periodId],
+  )
+  if (liqRes.rows[0]) {
+    const runStatus = liqRes.rows[0].status
+    throw new Error(
+      `La liquidación de ${periodLabel} ya está ${runStatus === 'issued' ? 'emitida' : 'cerrada'}. ` +
+        `Reabrila desde Liquidaciones si necesitás ajustar gastos.`,
+    )
   }
 
   const existing = await findExpenseInPeriodByProviderFromPostgres({
@@ -216,6 +249,11 @@ const emitSchema = z.object({
   propertyId: z.string().uuid(),
   year: z.number().int(),
   month: z.number().int().min(1).max(12),
+  // Si el período ya fue emitido (issued/closed) y tiene pagos vivos, la
+  // re-emisión desde la planilla los desvincula (porque borra y reinserta
+  // los items + asientos del ledger). Requerimos confirmación explícita
+  // desde la UI antes de permitirlo.
+  acknowledgeReissueImpact: z.boolean().optional().default(false),
 })
 
 export type NeighborMessage = {
@@ -278,6 +316,8 @@ export async function quickPayFromMesa(
     administrationId: property.administration_id,
   })
 
+  await assertProrataNotOver100(parsed.propertyId)
+
   const period = await getAccountingPeriodIdAndStatusFromPostgres({
     managedPropertyId: parsed.propertyId,
     periodYear: parsed.year,
@@ -316,7 +356,7 @@ export async function quickPayFromMesa(
   const receiptNumber = await callIAdminNextReceiptNumberInPostgres(property.administration_id)
 
   try {
-    await insertCollectionPaymentInPostgres({
+    const payment = await insertCollectionPaymentInPostgres({
       administrationId: property.administration_id,
       managedPropertyId: parsed.propertyId,
       liquidationRunId: run.id,
@@ -332,6 +372,15 @@ export async function quickPayFromMesa(
       receiptNumber,
       dueLabel: null,
       notes: null,
+      createdBy: profile.id,
+    })
+    await applyPaymentToLedgerInPostgres({
+      paymentId: payment.id,
+      administrationId: property.administration_id,
+      managedPropertyId: parsed.propertyId,
+      unitId: parsed.unitId,
+      amount: parsed.amount,
+      paidAt: today,
       createdBy: profile.id,
     })
   } catch (error) {
@@ -356,12 +405,46 @@ export async function emitAndNotify(
     administrationId: property.administration_id,
   })
 
+  await assertProrataNotOver100(parsed.propertyId)
+
   const period = await getAccountingPeriodIdAndStatusFromPostgres({
     managedPropertyId: parsed.propertyId,
     periodYear: parsed.year,
     periodMonth: parsed.month,
   })
   if (!period) throw new Error('El período no existe. Cargá al menos un gasto primero.')
+
+  // Gate de re-emisión: si ya hay un run emitido o cerrado, requerimos
+  // confirmación cuando el período está cerrado o cuando hay pagos vivos
+  // que quedarían desvinculados al borrar/regenerar los items.
+  const existingRun = await getExistingLiquidationRunForPeriodFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    accountingPeriodId: period.id,
+  })
+  if (
+    existingRun &&
+    (existingRun.status === 'issued' || existingRun.status === 'closed')
+  ) {
+    const stats = await getRunPaymentStatsFromPostgres(existingRun.id)
+    const isClosed = existingRun.status === 'closed'
+    const hasLivePayments = stats.count > 0
+    if ((isClosed || hasLivePayments) && !parsed.acknowledgeReissueImpact) {
+      const lines: string[] = []
+      if (isClosed) {
+        lines.push('Este período está cerrado.')
+      }
+      if (hasLivePayments) {
+        lines.push(
+          `Hay ${stats.count} pago${stats.count === 1 ? '' : 's'} vigente${stats.count === 1 ? '' : 's'} ` +
+            `(total $${stats.total.toFixed(2)}) que quedan desvinculados al re-emitir.`,
+        )
+      }
+      throw new Error(
+        `${lines.join(' ')} Confirmá la re-emisión desde la UI ` +
+          `(o llamá con acknowledgeReissueImpact=true).`,
+      )
+    }
+  }
 
   const imputedExpenses = await listImputedExpensesAmountsByPeriodFromPostgres({
     managedPropertyId: parsed.propertyId,
@@ -371,13 +454,28 @@ export async function emitAndNotify(
     throw new Error('No hay gastos imputados este mes. Cargá al menos uno en la planilla.')
   }
 
-  const ordinaryTotal = imputedExpenses
+  // Gastos particulares (unit_id seteado) NO se prorratean: van enteros a su
+  // unidad. Los separamos de la base prorrateable.
+  const commonExpenses = imputedExpenses.filter((e) => !e.unit_id)
+  const particularExpenses = imputedExpenses.filter((e) => e.unit_id)
+
+  const ordinaryTotal = commonExpenses
     .filter((e) => (e.expense_kind ?? 'ordinaria') !== 'extraordinaria')
     .reduce((s, e) => s + Number(e.amount), 0)
-  const extraordinaryTotal = imputedExpenses
+  const extraordinaryTotal = commonExpenses
     .filter((e) => e.expense_kind === 'extraordinaria')
     .reduce((s, e) => s + Number(e.amount), 0)
-  const totalExpenses = Math.round((ordinaryTotal + extraordinaryTotal) * 100) / 100
+
+  // Suma de cargos particulares por unidad.
+  const particularByUnit = new Map<string, number>()
+  for (const e of particularExpenses) {
+    const uid = e.unit_id as string
+    particularByUnit.set(uid, (particularByUnit.get(uid) ?? 0) + Number(e.amount))
+  }
+  const particularTotal = Array.from(particularByUnit.values()).reduce((s, v) => s + v, 0)
+
+  const totalExpenses =
+    Math.round((ordinaryTotal + extraordinaryTotal + particularTotal) * 100) / 100
 
   const units = await listActiveUnitsWithHoldersForEmitFromPostgres(parsed.propertyId)
   const eligibleUnits = units.filter((u) => u.prorata_coefficient !== null)
@@ -385,33 +483,41 @@ export async function emitAndNotify(
     throw new Error('No hay unidades activas con alícuota definida.')
   }
 
-  const previousBalanceByUnit = new Map<string, number>()
-  const priorItems = await listPriorRunItemsForEmitFromPostgres({
-    managedPropertyId: parsed.propertyId,
-    excludePeriodId: period.id,
+  // Materializamos recargos antes de calcular previous_balance, para asegurar
+  // que los intereses por mora acumulados desde la última emisión estén
+  // reflejados en el saldo a arrastrar al nuevo período.
+  await materializeLateFeesForAdministrationInPostgres({
+    administrationId: property.administration_id,
+    asOfDate: new Date().toISOString().slice(0, 10),
+    actorProfileId: profile.id,
   })
-  if (priorItems.length > 0) {
-    const itemIds = priorItems.map((it) => it.item_id)
-    const paidByItem = await sumLivePaymentsByItemIdsFromPostgres(itemIds)
-    for (const it of priorItems) {
-      const sub =
-        Number(it.ordinary_amount ?? 0) +
-        Number(it.extraordinary_amount ?? 0) +
-        Number(it.previous_balance ?? 0)
-      const paid = paidByItem.get(it.item_id) ?? 0
-      const debt = Math.max(0, Math.round((sub - paid) * 100) / 100)
-      if (debt > 0) previousBalanceByUnit.set(it.unit_id, debt)
-    }
-  }
+
+  // Modelo "ledger acumulativo (no colapsar)": el saldo anterior de cada
+  // unidad es la suma de sus entradas de ledger ABIERTAS de períodos previos
+  // (expensas ordinarias/extraordinarias + recargos por mora vivos). No se
+  // colapsa ni se absorbe nada: cada mes impago queda como entrada abierta y
+  // los recargos por mora siguen vivos por período. Excluimos el run de este
+  // período (si ya existía) para no doble-contar al re-emitir.
+  const previousBalanceByUnit = await sumOpenLedgerBalanceByUnitForPropertyFromPostgres({
+    managedPropertyId: parsed.propertyId,
+    excludeRunId: existingRun?.id ?? null,
+  })
   const totalPreviousBalance = Array.from(previousBalanceByUnit.values()).reduce((s, v) => s + v, 0)
 
   const nextMonth = parsed.month === 12 ? 1 : parsed.month + 1
   const nextYear = parsed.month === 12 ? parsed.year + 1 : parsed.year
   const mm = String(nextMonth).padStart(2, '0')
-  const dueDates = [
-    { label: '1er vencimiento', date: `${nextYear}-${mm}-10`, surcharge_pct: 0 },
-    { label: '2do vencimiento', date: `${nextYear}-${mm}-25`, surcharge_pct: 3 },
-  ]
+  const operationalRules = Array.isArray((property.operational_settings as any)?.dueDateRules)
+    ? ((property.operational_settings as any).dueDateRules as Array<{ label?: string; day?: number; surchargePct?: number }>)
+    : []
+  const dueDates = (operationalRules.length > 0 ? operationalRules : [
+    { label: '1er vencimiento', day: 10, surchargePct: 0 },
+    { label: '2do vencimiento', day: 25, surchargePct: 3 },
+  ]).map((rule) => ({
+    label: rule.label ?? 'Vencimiento',
+    date: `${nextYear}-${mm}-${String(Math.max(1, Math.min(28, Number(rule.day ?? 10)))).padStart(2, '0')}`,
+    surcharge_pct: Number(rule.surchargePct ?? 0),
+  }))
 
   const run = await upsertIssuedLiquidationRunInPostgres({
     administrationId: property.administration_id,
@@ -427,11 +533,17 @@ export async function emitAndNotify(
     issuedBy: profile.id,
   })
 
+  await voidLedgerEntriesForRunInPostgres({
+    runId: run.id,
+    actorProfileId: profile.id,
+    reason: 'reissued_from_planilla',
+  })
   await deleteLiquidationItemsForRunInPostgres(run.id)
   const itemsToInsert = eligibleUnits.map((u) => {
     const prorata = Number(u.prorata_coefficient)
     const ordinary = Math.round(ordinaryTotal * prorata * 100) / 100
     const extra = Math.round(extraordinaryTotal * prorata * 100) / 100
+    const particular = Math.round((particularByUnit.get(u.id) ?? 0) * 100) / 100
     const prev = previousBalanceByUnit.get(u.id) ?? 0
     return {
       liquidation_run_id: run.id,
@@ -441,12 +553,23 @@ export async function emitAndNotify(
       ordinary_amount: ordinary,
       extraordinary_amount: extra,
       previous_balance: prev,
+      particular_amount: particular,
     }
   })
   await bulkInsertLiquidationItemsInPostgres(itemsToInsert)
+  await createLedgerEntriesForIssuedRunInPostgres({
+    runId: run.id,
+    actorProfileId: profile.id,
+  })
 
   const newItems = await listLiquidationItemsByRunFromPostgres(run.id)
   const itemIds = newItems.map((it) => it.id)
+
+  // No-colapsar: NO absorbemos ni pisamos los recargos por mora previos.
+  // Quedan como entradas de ledger abiertas por período y ya están
+  // contemplados en `previousBalanceByUnit` (suma de ledger abierto). El
+  // `previous_balance` del recibo es informativo (saldo arrastrado), mientras
+  // que el ledger sigue siendo la fuente de verdad por mes.
 
   if (itemIds.length > 0) {
     await bulkRevokeShareTokensInPostgres(itemIds)
@@ -478,7 +601,8 @@ export async function emitAndNotify(
     const subtotal =
       Number(item?.ordinary_amount ?? 0) +
       Number(item?.extraordinary_amount ?? 0) +
-      Number(item?.previous_balance ?? 0)
+      Number(item?.previous_balance ?? 0) +
+      (particularByUnit.get(u.id) ?? 0)
     const token = tokenByItem.get(itemId) ?? null
     const shareUrl = token ? `${base}/l/${token}` : null
 
@@ -514,6 +638,14 @@ export async function emitAndNotify(
     action: 'liquidation.emitted_from_planilla',
     metadata: { period: periodLabelShort, neighbors: neighbors.length, total: totalExpenses },
   })
+
+  // Disparar mail a propietarios + vecinos principales en background. El
+  // helper captura errores internamente para no bloquear la emision; la
+  // idempotencia por (runId, unitId, profileId) evita re-envios en retry.
+  // (Path principal: la UI usa esta action para emitir, no
+  // changeLiquidationStatus. El hook que tiene esa otra action sigue
+  // sirviendo si alguien transiciona via API directa.)
+  void notifyLiquidationIssued(run.id)
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
   revalidatePath(`/iadmin/liquidaciones/${run.id}`)

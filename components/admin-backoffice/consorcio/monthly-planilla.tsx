@@ -2,39 +2,38 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { Check, ChevronRight, Info, Loader2, Plus, Search, Send, Sparkles, X } from 'lucide-react'
+import { AlertTriangle, Check, ChevronRight, FileSpreadsheet, Info, Loader2, Lock, RefreshCw, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import type {
+  IAdminCapability,
   IAdminCashAccountWithBalance,
   IAdminMesaState,
   IAdminMonthlyGrid,
   IAdminMonthlyGridRow,
 } from '@/lib/types'
 import {
-  addRecurringRubro,
   emitAndNotify,
   quickPayFromMesa,
   type EmitAndNotifyResult,
   upsertMonthlyCell,
 } from '@/app/iadmin/consorcios/[id]/planilla/actions'
 import {
-  acceptPredictionsAndEmit,
-  generateMonthPredictions,
-  type MonthPrediction,
-} from '@/app/iadmin/consorcios/[id]/planilla/predict-actions'
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { PublishDialog } from '@/components/admin-backoffice/consorcio/publish-dialog'
 import { MesaDistribution } from '@/components/admin-backoffice/consorcio/mesa-distribution'
 import { MesaPayments } from '@/components/admin-backoffice/consorcio/mesa-payments'
-import { MesaAssistant, type MesaAssistantTab } from '@/components/admin-backoffice/consorcio/mesa-assistant'
 import { MesaHeader } from '@/components/admin-backoffice/consorcio/mesa-header'
 import { MesaPreviousRecap } from '@/components/admin-backoffice/consorcio/mesa-previous-recap'
 import { CellHistoryPopover } from '@/components/admin-backoffice/consorcio/cell-history-popover'
-import { MesaCommandPalette } from '@/components/admin-backoffice/consorcio/mesa-command-palette'
-import { MesaHelpOverlay } from '@/components/admin-backoffice/consorcio/mesa-help-overlay'
-import { MesaDropZone } from '@/components/admin-backoffice/consorcio/mesa-drop-zone'
 import {
   MesaBatchBar,
   applyDeltaToAmount,
@@ -47,7 +46,8 @@ import { SavedIndicator } from '@/components/admin-backoffice/shared/saved-indic
 import { HistoryIndicator } from '@/components/admin-backoffice/shared/history-indicator'
 import { detectCellAnomaly, type CellAnomaly } from '@/components/admin-backoffice/shared/anomaly'
 import { EmptyState } from '@/components/admin-backoffice/shared/empty-state'
-import { FileSpreadsheet, SearchX } from 'lucide-react'
+import { RepeatPreviousMonthButton } from '@/components/admin-backoffice/gastos/repeat-previous-month-button'
+import { LiquidationStateButton } from '@/components/admin-backoffice/consorcio/liquidation-state-button'
 
 type Props = {
   grid: IAdminMonthlyGrid
@@ -57,6 +57,8 @@ type Props = {
   canEmit: boolean
   canManageRubros: boolean
   canRegisterPayments: boolean
+  /** Capabilities de liquidación del usuario, para gestionar estados (Cerrar/Reabrir). */
+  liquidationCaps: IAdminCapability[]
 }
 
 type VisibleRange = 3 | 6 | 12
@@ -109,6 +111,7 @@ export function MonthlyPlanilla({
   canEmit,
   canManageRubros,
   canRegisterPayments,
+  liquidationCaps,
 }: Props) {
   const router = useRouter()
 
@@ -120,20 +123,10 @@ export function MonthlyPlanilla({
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null)
   const [_, startTransition] = useTransition()
 
-  const [showRubroForm, setShowRubroForm] = useState(false)
-  const [newRubroName, setNewRubroName] = useState('')
+  const [reissueDialogOpen, setReissueDialogOpen] = useState(false)
 
   const [publishResult, setPublishResult] = useState<EmitAndNotifyResult | null>(null)
   const [publishing, setPublishing] = useState(false)
-
-  const [assistantOpen, setAssistantOpen] = useState(false)
-  const [assistantTab, setAssistantTab] = useState<MesaAssistantTab>('menu')
-  const [assistantDraggedFile, setAssistantDraggedFile] = useState<File | null>(null)
-  const [predictions, setPredictions] = useState<Map<string, MonthPrediction>>(new Map())
-
-  // Command palette + help overlay
-  const [commandOpen, setCommandOpen] = useState(false)
-  const [helpOpen, setHelpOpen] = useState(false)
 
   // Rango visible persistido (3 / 6 / 12)
   const [visibleRange, setVisibleRange] = useLocalPref<VisibleRange>('mesa.visibleRange', 3)
@@ -173,12 +166,12 @@ export function MonthlyPlanilla({
     setSelectionAnchor(null)
   }
 
-  // Búsqueda + agrupación (groupBy + rango persistidos)
-  const [search, setSearch] = useState('')
+  // Agrupación persistida (la búsqueda inline se removió junto con el
+  // header de la planilla; `search` queda como literal vacío para que los
+  // checks `search.trim()` repartidos en el render siempre den false).
   const [groupBy, setGroupBy] = useLocalPref<'none' | 'category'>('mesa.groupBy', 'none')
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
-
-  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const search = ''
 
   const visibleMonths = useMemo(() => {
     const take = Math.min(visibleRange, grid.months.length)
@@ -274,113 +267,20 @@ export function MonthlyPlanilla({
     })
   }
 
-  async function handleAddRubro(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const name = newRubroName.trim()
-    if (!name) {
-      toast.error('Nombre obligatorio')
-      return
-    }
-    try {
-      await addRecurringRubro({ administrationId: grid.administrationId, name })
-      toast.success('Rubro agregado')
-      setNewRubroName('')
-      setShowRubroForm(false)
-      router.refresh()
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error')
-    }
-  }
-
-  async function handleEmit() {
+  async function handleEmit(opts?: { acknowledgeReissueImpact?: boolean }) {
     setPublishing(true)
     try {
       const result = await emitAndNotify({
         propertyId: grid.propertyId,
         year: currentMonth.year,
         month: currentMonth.month,
+        acknowledgeReissueImpact: opts?.acknowledgeReissueImpact ?? false,
       })
       setPublishResult(result)
-      toast.success(`Liquidación emitida · ${result.neighbors.length} residentes`)
+      setReissueDialogOpen(false)
+      toast.success(`Liquidación emitida · ${result.neighbors.length} vecinos`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Error al emitir')
-    } finally {
-      setPublishing(false)
-    }
-  }
-
-  async function handleRequestPredictions() {
-    try {
-      const result = await generateMonthPredictions({
-        propertyId: grid.propertyId,
-        year: currentMonth.year,
-        month: currentMonth.month,
-      })
-      const map = new Map<string, MonthPrediction>()
-      for (const p of result.predictions) map.set(p.providerId, p)
-      setPredictions(map)
-      if (result.predictions.length === 0) {
-        toast.info('No hay historial suficiente para sugerir montos')
-      } else {
-        toast.success(`IA sugirió ${result.predictions.length} montos. Revisá cada uno.`)
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error de IA')
-    }
-  }
-
-  function acceptPrediction(providerId: string) {
-    const pred = predictions.get(providerId)
-    if (!pred) return
-    const row = grid.rows.find((r) => r.providerId === providerId)
-    if (!row) return
-    void commitCell(row, currentMonth.year, currentMonth.month, pred.suggestedAmount)
-    setPredictions((prev) => {
-      const next = new Map(prev)
-      next.delete(providerId)
-      return next
-    })
-  }
-
-  function dismissPrediction(providerId: string) {
-    setPredictions((prev) => {
-      const next = new Map(prev)
-      next.delete(providerId)
-      return next
-    })
-  }
-
-  async function handleAcceptAllAndEmit() {
-    const toAccept: Array<{ providerId: string; amount: number }> = []
-    for (const [providerId, pred] of predictions) {
-      const row = grid.rows.find((r) => r.providerId === providerId)
-      if (!row) continue
-      const key = cellKey(providerId, currentMonth.year, currentMonth.month)
-      const displayed = key in localValues
-        ? localValues[key]
-        : row.cells.find((c) => c.year === currentMonth.year && c.month === currentMonth.month)?.amount ?? null
-      if (displayed !== null) continue
-      toAccept.push({ providerId, amount: pred.suggestedAmount })
-    }
-
-    if (toAccept.length === 0) {
-      if (grid.readyToEmit) await handleEmit()
-      return
-    }
-
-    setPublishing(true)
-    try {
-      const result = await acceptPredictionsAndEmit({
-        propertyId: grid.propertyId,
-        year: currentMonth.year,
-        month: currentMonth.month,
-        acceptedPredictions: toAccept,
-      })
-      setPublishResult(result.emit)
-      setPredictions(new Map())
-      toast.success(`${result.applied} sugerencias aceptadas y liquidación emitida`)
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Error')
     } finally {
       setPublishing(false)
     }
@@ -398,125 +298,12 @@ export function MonthlyPlanilla({
   }
 
   const allRows = grid.freeRow ? [...grid.rows, grid.freeRow] : grid.rows
-  const hasPredictions = predictions.size > 0
 
-  // --------------------------------------------------------------------------
-  // Acciones rápidas (para command palette + hotkeys)
-  // --------------------------------------------------------------------------
-  const openAssistantTab = useCallback((tab: MesaAssistantTab) => {
-    setAssistantOpen(true)
-    setAssistantTab(tab)
-  }, [])
+  // La grilla es de solo lectura: no hay edición de celdas, atajos de
+  // deshacer/rehacer/copiar ni selección múltiple. Los gastos se cargan y
+  // editan exclusivamente desde la sección Gastos.
 
-  const focusSearch = useCallback(() => {
-    searchInputRef.current?.focus()
-    searchInputRef.current?.select()
-  }, [])
-
-  const handleAddRubroTrigger = useCallback(() => {
-    if (!canManageRubros) return
-    setShowRubroForm(true)
-    // Delay para esperar el render del form
-    setTimeout(() => {
-      const el = document.querySelector<HTMLInputElement>('[data-rubro-name-input]')
-      el?.focus()
-    }, 50)
-  }, [canManageRubros])
-
-  const handleToggleChart = useCallback(() => {
-    // MesaHeader expone el toggle internamente; emitimos un evento que el header escucha
-    window.dispatchEvent(new CustomEvent('mesa:toggle-chart'))
-  }, [])
-
-  const handleJumpToProvider = useCallback((providerId: string) => {
-    // Scroll + flash visual sobre la row del rubro
-    const row = document.querySelector<HTMLTableRowElement>(`[data-provider-id="${providerId}"]`)
-    if (!row) return
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    row.classList.add('mesa-fade-in')
-    setTimeout(() => row.classList.remove('mesa-fade-in'), 600)
-  }, [])
-
-  const handleOpenUnit = useCallback((unitId: string) => {
-    // Emitimos un evento que MesaPayments puede escuchar para abrir el drawer
-    window.dispatchEvent(new CustomEvent('mesa:open-unit', { detail: { unitId } }))
-  }, [])
-
-  const handleDropFile = useCallback((file: File) => {
-    setAssistantDraggedFile(file)
-    openAssistantTab('extract')
-  }, [openAssistantTab])
-
-  // --------------------------------------------------------------------------
-  // Hotkeys globales
-  // --------------------------------------------------------------------------
-  useHotkeys({
-    'mod+k': (e) => {
-      e.preventDefault()
-      setCommandOpen(true)
-    },
-    'mod+z': (e) => {
-      e.preventDefault()
-      void undo()
-    },
-    'mod+shift+z': (e) => {
-      e.preventDefault()
-      void redo()
-    },
-    'mod+y': (e) => {
-      e.preventDefault()
-      void redo()
-    },
-    'mod+c': (e) => {
-      // Sólo interceptamos si hay selección múltiple; si no, dejamos pasar
-      // el copy nativo del browser.
-      if (selection.size < 2) return
-      e.preventDefault()
-      void copySelection()
-    },
-    '?': (e) => {
-      e.preventDefault()
-      setHelpOpen(true)
-    },
-    '/': (e) => {
-      e.preventDefault()
-      focusSearch()
-    },
-    a: (e) => {
-      e.preventDefault()
-      setAssistantOpen((v) => !v)
-      if (!assistantOpen) setAssistantTab('menu')
-    },
-    n: (e) => {
-      if (!canManageRubros) return
-      e.preventDefault()
-      handleAddRubroTrigger()
-    },
-    e: (e) => {
-      if (!canEmit || (!grid.readyToEmit && !hasPredictions)) return
-      e.preventDefault()
-      // Scroll al botón emitir para feedback visual
-      document.querySelector('[data-emit-button]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      ;(document.querySelector<HTMLButtonElement>('[data-emit-button]'))?.focus()
-    },
-    escape: () => {
-      if (commandOpen) setCommandOpen(false)
-      else if (helpOpen) setHelpOpen(false)
-      else if (assistantOpen) setAssistantOpen(false)
-      else if (selection.size > 0) clearSelection()
-    },
-  })
-
-  // Filtro por search (por nombre de rubro o categoría)
-  const filteredRows = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return allRows
-    return allRows.filter(
-      (r) =>
-        r.providerName.toLowerCase().includes(q) ||
-        (r.category ?? '').toLowerCase().includes(q),
-    )
-  }, [allRows, search])
+  const filteredRows = allRows
 
   // Agrupación: si groupBy = 'category', armamos grupos. Extraordinarias siempre
   // forman su propio grupo al final. Si hay búsqueda activa, no agrupamos.
@@ -890,7 +677,6 @@ export function MonthlyPlanilla({
         <MesaPreviousRecap
           previousMonth={grid.months[grid.months.length - 2]}
           previousState={previousState}
-          propertyId={grid.propertyId}
         />
       ) : null}
 
@@ -906,93 +692,37 @@ export function MonthlyPlanilla({
             <div className="min-w-0">
               <h2 className="font-serif text-lg font-semibold text-foreground">Gastos del mes</h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Cargá los montos. Cada celda se guarda sola. La mini-curva a la derecha es la tendencia del rubro.
+                Resumen de solo lectura. Para cargar o editar gastos usá la sección Gastos. La mini-curva a la derecha es la tendencia del rubro.
               </p>
             </div>
-            <div className="pt-1 flex items-center gap-3 flex-wrap">
-              <SavedIndicator lastSavedAt={lastSavedAt} pendingCount={pendingCells.size} />
-              <HistoryIndicator
-                canUndo={history.length > 0}
-                canRedo={redoStack.length > 0}
-                undoLabel={history[history.length - 1]?.label}
-                redoLabel={redoStack[redoStack.length - 1]?.label}
-                onUndo={() => void undo()}
-                onRedo={() => void redo()}
+          </div>
+          {(() => {
+            // Botón para repetir los gastos del mes anterior en el período pivote.
+            // Sólo si el período sigue editable (no cerrado/bloqueado ni liquidado).
+            const pivot = grid.months[grid.months.length - 1]
+            if (!canManageRubros || !pivot) return null
+            const editable =
+              pivot.periodStatus !== 'closed' &&
+              pivot.periodStatus !== 'locked' &&
+              pivot.runStatus !== 'issued' &&
+              pivot.runStatus !== 'closed'
+            if (!editable) return null
+            const pivotHasExpenses = (grid.totalByMonth[`${pivot.year}-${pivot.month}`] ?? 0) > 0
+            return (
+              <RepeatPreviousMonthButton
+                managedPropertyId={grid.propertyId}
+                targetYear={pivot.year}
+                targetMonth={pivot.month}
+                targetHasExpenses={pivotHasExpenses}
               />
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setCommandOpen(true)}
-              className="hidden md:inline-flex items-center gap-2 rounded-full border border-border/50 bg-background px-3 py-1 text-[11px] text-muted-foreground hover:border-primary/40 hover:text-foreground transition-colors"
-              title="Acciones rápidas"
-            >
-              <Search className="w-3 h-3" />
-              Buscar
-              <span className="kbd-hint">⌘K</span>
-            </button>
-            {canManageRubros && !showRubroForm ? (
-              <Button size="sm" variant="outline" onClick={() => setShowRubroForm(true)}>
-                <Plus className="w-3.5 h-3.5 mr-1" />
-                Rubro
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant={assistantOpen ? 'default' : 'ghost'}
-              onClick={() => {
-                setAssistantOpen((v) => !v)
-                if (!assistantOpen) setAssistantTab('menu')
-              }}
-              className={assistantOpen ? '' : 'text-muted-foreground'}
-            >
-              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
-              Asistente
-            </Button>
-            <button
-              type="button"
-              onClick={() => setHelpOpen(true)}
-              className="rounded-full p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              aria-label="Atajos de teclado"
-              title="Atajos (?)"
-            >
-              <Info className="w-3.5 h-3.5" />
-            </button>
-          </div>
+            )
+          })()}
         </header>
 
         <div className="divider-soft" />
 
         {allRows.length > 3 ? (
           <div className="px-6 py-2.5 flex items-center gap-2 flex-wrap bg-muted/10">
-            <div className="relative flex-1 min-w-[180px] max-w-sm">
-              <Search className="w-3.5 h-3.5 text-muted-foreground absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                ref={searchInputRef}
-                type="text"
-                placeholder="Buscar rubro… (/)"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setSearch('')
-                    ;(e.target as HTMLInputElement).blur()
-                  }
-                }}
-                className="w-full text-xs pl-8 pr-2 py-1.5 rounded-full border border-border/50 bg-background focus:outline-none focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(17, 34, 80,0.08)] transition-shadow"
-              />
-              {search ? (
-                <button
-                  type="button"
-                  onClick={() => setSearch('')}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              ) : null}
-            </div>
-            <div className="flex-1" />
             <div className="seg" role="group" aria-label="Agrupar rubros">
               <button
                 type="button"
@@ -1009,39 +739,6 @@ export function MonthlyPlanilla({
                 Por categoría
               </button>
             </div>
-            {filteredRows.length !== allRows.length ? (
-              <span className="text-[11px] text-muted-foreground tabular-nums">
-                {filteredRows.length} / {allRows.length}
-              </span>
-            ) : null}
-          </div>
-        ) : null}
-
-        {showRubroForm ? (
-          <form onSubmit={handleAddRubro} className="px-6 py-3 bg-muted/20 flex items-end gap-2 mesa-fade-in">
-            <div className="flex-1 space-y-1">
-              <Label className="text-xs">Nombre del rubro</Label>
-              <Input
-                data-rubro-name-input
-                value={newRubroName}
-                onChange={(e) => setNewRubroName(e.target.value)}
-                placeholder="Ej. Fondo de obra"
-                autoFocus
-              />
-            </div>
-            <Button type="submit" size="sm">Agregar</Button>
-            <Button type="button" size="sm" variant="ghost" onClick={() => { setShowRubroForm(false); setNewRubroName('') }}>
-              Cancelar
-            </Button>
-          </form>
-        ) : null}
-
-        {hasPredictions ? (
-          <div className="px-6 py-2 bg-primary/5 text-xs text-foreground flex items-center justify-between gap-3 flex-wrap mesa-fade-in">
-            <span>{predictions.size} montos sugeridos aplicados en la columna {currentMonth.label}. Revisá cada uno.</span>
-            <button onClick={() => setPredictions(new Map())} className="text-muted-foreground hover:text-foreground text-xs">
-              Descartar todos
-            </button>
           </div>
         ) : null}
 
@@ -1072,31 +769,7 @@ export function MonthlyPlanilla({
                     <EmptyState
                       icon={FileSpreadsheet}
                       title="La planilla está vacía"
-                      description={
-                        canManageRubros
-                          ? 'Agregá tu primer rubro (luz, encargado, mantenimiento…) o arrastrá una factura y la IA la carga sola.'
-                          : 'Todavía no se cargaron rubros. Un administrador con permisos puede agregarlos.'
-                      }
-                      actions={
-                        canManageRubros
-                          ? [
-                              { label: 'Agregar rubro', onClick: () => setShowRubroForm(true), shortcut: 'N', kind: 'primary' },
-                              { label: 'Extraer factura', onClick: () => openAssistantTab('extract'), kind: 'secondary' },
-                            ]
-                          : []
-                      }
-                    />
-                  </td>
-                </tr>
-              ) : visibleRows.length === 0 ? (
-                <tr>
-                  <td colSpan={visibleMonths.length + 1} className="px-0 py-0">
-                    <EmptyState
-                      icon={SearchX}
-                      title="Sin resultados"
-                      description={`No hay rubros que coincidan con "${search}". Probá otra palabra o limpiá la búsqueda.`}
-                      actions={[{ label: 'Limpiar búsqueda', onClick: () => setSearch(''), kind: 'secondary' }]}
-                      compact
+                      description="Todavía no se cargaron rubros. Configurá proveedores recurrentes desde Proveedores."
                     />
                   </td>
                 </tr>
@@ -1178,7 +851,6 @@ export function MonthlyPlanilla({
                             </div>
                           </td>
                           {visibleMonths.map((m, monthIdx) => {
-                            const prediction = m.isCurrent && row.providerId ? predictions.get(row.providerId) : undefined
                             const displayedAmount = getDisplayAmount(row, m.year, m.month)
                             const cellData = row.cells.find((c) => c.year === m.year && c.month === m.month)
                             // Anomaly sólo si NO estamos editando esa celda (para no distraer)
@@ -1201,9 +873,8 @@ export function MonthlyPlanilla({
                                 saved={savedCells.has(cellKey(row.providerId, m.year, m.month))}
                                 anomaly={anomaly}
                                 amount={displayedAmount}
-                                prediction={displayedAmount === null ? prediction : undefined}
                                 isCurrent={m.isCurrent}
-                                isEditable={cellData?.isEditable ?? true}
+                                isEditable={false}
                                 isSelected={isSelected}
                                 isAnchor={isAnchor}
                                 selectionSize={selection.size}
@@ -1296,8 +967,6 @@ export function MonthlyPlanilla({
                                   setSelectionAnchor(null)
                                   moveFocus(r, c, edit)
                                 }}
-                                onAcceptPrediction={() => acceptPrediction(row.providerId)}
-                                onDismissPrediction={() => dismissPrediction(row.providerId)}
                               />
                             )
                           })}
@@ -1319,10 +988,6 @@ export function MonthlyPlanilla({
                   for (const row of filteredRows) {
                     const val = getDisplayAmount(row, m.year, m.month)
                     if (val !== null) total += val
-                    else if (m.isCurrent && row.providerId) {
-                      const pred = predictions.get(row.providerId)
-                      if (pred) total += pred.suggestedAmount
-                    }
                   }
                   return (
                     <td
@@ -1351,104 +1016,232 @@ export function MonthlyPlanilla({
         currentMonth={currentMonth.month}
       />
 
-      <section className="mesa-card p-5">
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
+      {(() => {
+        // Estado del CTA de emisión / re-emisión. Cuatro variantes:
+        //  1) sin run (o draft/calculated)        → "Emitir y avisar"
+        //  2) run issued + sin cambios            → "Liquidación al día" (deshabilitado)
+        //  3) run issued + con cambios            → "Re-emitir con los cambios"
+        //     (si hay pagos vivos, pide confirmación)
+        //  4) run closed                          → "Período cerrado" (link a reabrir)
+        const currentTotal =
+          Math.round((state.totalToDistribute + state.previousBalanceTotal) * 100) / 100
+        const runTotal = state.runSnapshotTotal
+        const isClosed = state.runStatus === 'closed'
+        const isIssued = state.runStatus === 'issued'
+        const isReissue = state.hasRun && (isIssued || isClosed)
+        const hasChanges =
+          state.hasRun &&
+          (runTotal === null || Math.abs(currentTotal - runTotal) > 0.01)
+        const upToDate = isReissue && !hasChanges
+        const needsReissueConfirm =
+          isReissue && (isClosed || state.runLivePaymentsCount > 0)
+
+        const baseDisabled =
+          !canEmit ||
+          !grid.readyToEmit ||
+          publishing ||
+          grid.activeUnitsCount === 0
+
+        // --- Variante 4: período cerrado, no permitimos re-emitir desde acá ---
+        if (isClosed) {
+          return (
+            <section className="mesa-card p-5 border-l-4 border-l-slate-400">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-start gap-3 min-w-0">
+                  <Lock className="w-5 h-5 text-slate-500 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-serif text-lg font-semibold text-foreground">
+                      Período cerrado
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      La liquidación de {currentMonth.label} está cerrada y no se puede re-emitir desde acá.
+                      {state.runLivePaymentsCount > 0
+                        ? ` Tiene ${state.runLivePaymentsCount} pago${state.runLivePaymentsCount === 1 ? '' : 's'} vivo${state.runLivePaymentsCount === 1 ? '' : 's'} asociado${state.runLivePaymentsCount === 1 ? '' : 's'}.`
+                        : ''}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )
+        }
+
+        // --- Variante 2: ya emitida y sin cambios ---
+        if (upToDate) {
+          return (
+            <section className="mesa-card p-5 border-l-4 border-l-emerald-500/60">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex items-start gap-3 min-w-0">
+                  <Check className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                  <div>
+                    <h3 className="font-serif text-lg font-semibold text-foreground">
+                      Liquidación al día
+                    </h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      La liquidación emitida de {currentMonth.label} ya refleja los totales actuales.
+                      Hacé un cambio en la planilla para habilitar la re-emisión.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )
+        }
+
+        // --- Variantes 1 y 3: emitir / re-emitir ---
+        const isReissueAction = isReissue
+        const title = isReissueAction
+          ? 'Re-emitir con los cambios'
+          : 'Emitir y avisar a los vecinos'
+
+        const subtitle = !canEmit
+          ? 'Tu rol no puede emitir liquidaciones.'
+          : !grid.readyToEmit
+            ? 'Cargá al menos un gasto del mes para poder emitir.'
+            : isReissueAction
+              ? `Se reemplaza la liquidación de ${currentMonth.label} y se reenvían los mensajes a los ${grid.activeUnitsCount} vecinos.`
+              : `Se genera la liquidación de ${currentMonth.label} y los mensajes para los ${grid.activeUnitsCount} vecinos.`
+
+        function triggerEmit() {
+          if (needsReissueConfirm) {
+            setReissueDialogOpen(true)
+            return
+          }
+          void handleEmit()
+        }
+
+        return (
+          <section
+            className={[
+              'mesa-card p-5',
+              isReissueAction ? 'border-l-4 border-l-amber-500/70' : '',
+            ].join(' ')}
+          >
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-start gap-3 min-w-0">
+                {isReissueAction ? (
+                  <RefreshCw className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                ) : null}
+                <div>
+                  <h3 className="font-serif text-lg font-semibold text-foreground">{title}</h3>
+                  <p className="text-xs text-muted-foreground mt-0.5">{subtitle}</p>
+                  {isReissueAction && state.runLivePaymentsCount > 0 ? (
+                    <p className="text-[11px] text-amber-700 mt-1 inline-flex items-center gap-1">
+                      <AlertTriangle className="w-3 h-3" />
+                      Hay {state.runLivePaymentsCount} pago
+                      {state.runLivePaymentsCount === 1 ? '' : 's'} vivo
+                      {state.runLivePaymentsCount === 1 ? '' : 's'} (total $
+                      {state.runLivePaymentsTotal.toFixed(2)}) que quedan desvinculados.
+                    </p>
+                  ) : null}
+                </div>
+              </div>
+              <Button
+                data-emit-button
+                size="lg"
+                disabled={baseDisabled}
+                onClick={triggerEmit}
+                variant={isReissueAction ? 'default' : 'default'}
+              >
+                {publishing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                    Procesando…
+                  </>
+                ) : (
+                  <>
+                    {isReissueAction ? (
+                      <RefreshCw className="w-4 h-4 mr-1.5" />
+                    ) : (
+                      <Send className="w-4 h-4 mr-1.5" />
+                    )}
+                    {isReissueAction ? 'Re-emitir' : 'Emitir y avisar'}
+                  </>
+                )}
+              </Button>
+            </div>
+          </section>
+        )
+      })()}
+
+      {state.runId && (state.runStatus === 'issued' || state.runStatus === 'closed') ? (
+        <section className="mesa-card p-5 flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0">
             <h3 className="font-serif text-lg font-semibold text-foreground">
-              {hasPredictions ? 'Aceptar sugerencias y emitir' : state.hasRun ? 'Re-emitir con los cambios' : 'Emitir y avisar a los residentes'}
+              Estado de la liquidación
             </h3>
             <p className="text-xs text-muted-foreground mt-0.5">
-              {canEmit
-                ? grid.readyToEmit || hasPredictions
-                  ? `Se genera la liquidación de ${currentMonth.label} y los mensajes para los ${grid.activeUnitsCount} residentes.`
-                  : 'Cargá al menos un gasto del mes para poder emitir.'
-                : 'Tu rol no puede emitir liquidaciones.'}
+              {state.runStatus === 'closed'
+                ? `La liquidación de ${currentMonth.label} está cerrada. Podés reabrirla si necesitás corregirla.`
+                : `La liquidación de ${currentMonth.label} está emitida. Cerrala para asentar el período definitivamente.`}
             </p>
           </div>
-          <Button
-            data-emit-button
-            size="lg"
-            disabled={!canEmit || (!grid.readyToEmit && !hasPredictions) || publishing || grid.activeUnitsCount === 0}
-            onClick={hasPredictions ? handleAcceptAllAndEmit : handleEmit}
-          >
-            {publishing ? (
-              <>
-                <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                Procesando…
-              </>
-            ) : (
-              <>
-                <Send className="w-4 h-4 mr-1.5" />
-                Emitir y avisar
-              </>
-            )}
-          </Button>
-        </div>
-      </section>
+          <LiquidationStateButton
+            runId={state.runId}
+            propertyId={grid.propertyId}
+            currentStatus={state.runStatus}
+            periodLabel={currentMonth.label}
+            userCapabilities={liquidationCaps}
+          />
+        </section>
+      ) : null}
+
+      <AlertDialog open={reissueDialogOpen} onOpenChange={setReissueDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600" />
+              ¿Re-emitir la liquidación?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>
+                  Al re-emitir la liquidación de <strong>{currentMonth.label}</strong> se
+                  reemplazan todos los items, se anulan los asientos contables anteriores y
+                  se vuelven a generar los links para los vecinos.
+                </p>
+                {state.runStatus === 'closed' ? (
+                  <p className="text-amber-700">
+                    <strong>Este período está cerrado.</strong> La re-emisión lo reabre automáticamente.
+                  </p>
+                ) : null}
+                {state.runLivePaymentsCount > 0 ? (
+                  <p className="text-amber-700">
+                    Hay <strong>{state.runLivePaymentsCount}</strong> pago
+                    {state.runLivePaymentsCount === 1 ? '' : 's'} vivo
+                    {state.runLivePaymentsCount === 1 ? '' : 's'} (total{' '}
+                    <strong>${state.runLivePaymentsTotal.toFixed(2)}</strong>) que quedan
+                    desvinculados de los items nuevos. Los recibos siguen siendo válidos
+                    pero hay que re-imputarlos manualmente.
+                  </p>
+                ) : null}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={publishing}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={publishing}
+              onClick={(e) => {
+                e.preventDefault()
+                void handleEmit({ acknowledgeReissueImpact: true })
+              }}
+            >
+              {publishing ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                  Re-emitiendo…
+                </>
+              ) : (
+                'Re-emitir igual'
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {publishResult ? (
         <PublishDialog result={publishResult} onClose={() => setPublishResult(null)} />
-      ) : null}
-
-      {assistantOpen ? (
-        <MesaAssistant
-          propertyId={grid.propertyId}
-          administrationId={grid.administrationId}
-          year={currentMonth.year}
-          month={currentMonth.month}
-          hasPredictions={hasPredictions}
-          initialTab={assistantTab}
-          draggedFile={assistantDraggedFile}
-          onDraggedFileConsumed={() => setAssistantDraggedFile(null)}
-          onRequestPredictions={handleRequestPredictions}
-          onClose={() => {
-            setAssistantOpen(false)
-            setAssistantDraggedFile(null)
-          }}
-        />
-      ) : null}
-
-      <MesaCommandPalette
-        open={commandOpen}
-        onOpenChange={setCommandOpen}
-        grid={grid}
-        state={state}
-        canEmit={canEmit}
-        canManageRubros={canManageRubros}
-        canUndo={history.length > 0}
-        canRedo={redoStack.length > 0}
-        undoLabel={history[history.length - 1]?.label}
-        redoLabel={redoStack[redoStack.length - 1]?.label}
-        onUndo={() => void undo()}
-        onRedo={() => void redo()}
-        onOpenAssistant={() => openAssistantTab('menu')}
-        onOpenAssistantExtract={() => openAssistantTab('extract')}
-        onOpenAssistantAnnounce={() => openAssistantTab('announce')}
-        onToggleChart={handleToggleChart}
-        onFocusSearch={focusSearch}
-        onAddRubro={handleAddRubroTrigger}
-        onEmit={() => {
-          document.querySelector('[data-emit-button]')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-          ;(document.querySelector<HTMLButtonElement>('[data-emit-button]'))?.focus()
-        }}
-        onOpenUnit={handleOpenUnit}
-        onJumpToProvider={handleJumpToProvider}
-        onOpenConfiguracion={() => router.push(`/iadmin/consorcios/${grid.propertyId}/configuracion`)}
-        onOpenHelp={() => setHelpOpen(true)}
-      />
-
-      <MesaHelpOverlay open={helpOpen} onOpenChange={setHelpOpen} />
-
-      <MesaDropZone onFile={handleDropFile} />
-
-      {selection.size > 1 ? (
-        <MesaBatchBar
-          count={selection.size}
-          onClear={clearSelection}
-          onApplyDelta={applyDeltaToSelection}
-          onClearValues={clearSelectedCells}
-          onCopy={copySelection}
-        />
       ) : null}
     </div>
   )
@@ -1501,7 +1294,6 @@ type EditableCellProps = {
   saved: boolean
   anomaly: CellAnomaly | null
   amount: number | null
-  prediction?: MonthPrediction
   isCurrent: boolean
   isEditable: boolean
   editSeed?: string | null
@@ -1522,8 +1314,6 @@ type EditableCellProps = {
     edit?: boolean,
     opts?: { extendSelection?: boolean },
   ) => void
-  onAcceptPrediction?: () => void
-  onDismissPrediction?: () => void
 }
 
 function parseNumericString(s: string): number | null {
@@ -1544,7 +1334,6 @@ function EditableCell({
   saved,
   anomaly,
   amount,
-  prediction,
   isCurrent,
   isEditable,
   editSeed,
@@ -1560,8 +1349,6 @@ function EditableCell({
   onSelectRange,
   onToggleSelect,
   onMove,
-  onAcceptPrediction,
-  onDismissPrediction,
 }: EditableCellProps) {
   const [draft, setDraft] = useState(
     editSeed !== null && editSeed !== undefined ? editSeed : amount !== null ? String(amount) : '',
@@ -1603,56 +1390,12 @@ function EditableCell({
               queueMicrotask(() => onMove(rowIdx, monthIdx, false))
             }
           }}
-          className="w-full text-right tabular-nums text-sm bg-background border border-primary/70 rounded-md px-2 py-1 outline-none shadow-[0_0_0_3px_rgba(17, 34, 80,0.12)] transition-shadow"
+          className="w-full text-right tabular-nums text-sm bg-background border border-primary/70 rounded-md px-2 py-1 outline-none shadow-[0_0_0_3px_rgba(240, 78, 35,0.12)] transition-shadow"
         />
       </td>
     )
   }
 
-  if (prediction && amount === null && isEditable) {
-    return (
-      <td
-        className={`px-2 py-2 ${isCurrent ? 'th-current-month' : ''}`}
-        ref={(el) => registerRef(rowIdx, monthIdx, el)}
-        tabIndex={0}
-        onKeyDown={(e) =>
-          handleNavKeys(e, { rowIdx, monthIdx, onMove, onStartEdit, onClear })
-        }
-      >
-        <div className="flex flex-col items-end gap-1 mesa-fade-in">
-          <span className="text-muted-foreground italic tabular-nums text-xs">
-            ~ {formatARSShort(prediction.suggestedAmount)}
-          </span>
-          <div className="flex gap-1">
-            <button
-              type="button"
-              onClick={onAcceptPrediction}
-              className="rounded-md bg-foreground text-background px-1.5 py-0.5 text-[10px] hover:opacity-90 transition-opacity"
-              title={prediction.reason}
-            >
-              <Check className="w-3 h-3" />
-            </button>
-            <button
-              type="button"
-              onClick={() => onStartEdit()}
-              className="rounded-md border border-border/60 bg-background px-1.5 py-0.5 text-[10px] hover:border-primary/40 transition-colors"
-              title="Editar"
-            >
-              ✎
-            </button>
-            <button
-              type="button"
-              onClick={onDismissPrediction}
-              className="rounded-md border border-border/60 bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
-              title="Descartar"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        </div>
-      </td>
-    )
-  }
 
   const hasHistory = Boolean(cellData?.expenseId)
   const anomalyColor =
@@ -1694,8 +1437,8 @@ function EditableCell({
 
   const selectionClass = isSelected
     ? isAnchor && selectionSize > 1
-      ? 'bg-primary/15 shadow-[inset_0_0_0_2px_rgba(17, 34, 80,0.55)]'
-      : 'bg-primary/10 shadow-[inset_0_0_0_1px_rgba(17, 34, 80,0.35)]'
+      ? 'bg-primary/15 shadow-[inset_0_0_0_2px_rgba(240, 78, 35,0.55)]'
+      : 'bg-primary/10 shadow-[inset_0_0_0_1px_rgba(240, 78, 35,0.35)]'
     : ''
 
   return (
@@ -1743,15 +1486,15 @@ function EditableCell({
           onPasteAmount?.(n === 0 ? 0 : n)
         }
       }}
-      className={`px-4 py-2 text-right tabular-nums transition-colors outline-none focus:shadow-[inset_0_0_0_2px_rgba(17, 34, 80,0.5)] ${
+      className={`px-4 py-2 text-right tabular-nums transition-colors outline-none focus:shadow-[inset_0_0_0_2px_rgba(240, 78, 35,0.5)] ${
         isCurrent ? 'th-current-month font-medium' : ''
       } ${
-        isEditable ? 'cursor-pointer hover:bg-primary/10' : 'cursor-not-allowed opacity-60'
+        isEditable ? 'cursor-pointer hover:bg-primary/10' : 'cursor-default'
       } ${amount !== null ? 'text-foreground' : 'text-muted-foreground/70'} ${saved ? 'cell-saved' : ''} ${selectionClass}`}
       title={
         isEditable
           ? 'Enter edita · Del limpia · Shift+click selecciona rango · Ctrl/Cmd+click toggle'
-          : 'Período cerrado'
+          : undefined
       }
     >
       {contents}

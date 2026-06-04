@@ -3,10 +3,9 @@ import type {
   ConsorcioContext,
   NegocioContext,
   SuperAdminContext,
-  PropietarioContext,
 } from './context-builders'
 
-type AnyContext = VecinoContext | ConsorcioContext | NegocioContext | SuperAdminContext | PropietarioContext
+type AnyContext = VecinoContext | ConsorcioContext | NegocioContext | SuperAdminContext
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
@@ -161,46 +160,6 @@ ${promos}
 Respondé siempre en español rioplatense (usá "vos"), de forma clara y ejecutiva. Podés responder cualquier consulta sobre el estado general de la plataforma.`
 }
 
-function propietarioPrompt(ctx: PropietarioContext): string {
-  const unitsText = ctx.units.length
-    ? ctx.units
-        .map((u) => {
-          const liq = u.latestLiquidation
-          const payments = u.recentPayments.length
-            ? u.recentPayments
-                .map((p) => `  · $${p.amount.toLocaleString('es-AR')} el ${new Date(p.paidAt).toLocaleDateString('es-AR')}`)
-                .join('\n')
-            : '  Sin pagos registrados.'
-          return `### Unidad ${u.code}${u.floor ? ` (Piso ${u.floor})` : ''} — ${u.buildingName} (${u.buildingAddress})
-${
-  liq
-    ? `- Última liquidación (${liq.period}): Ordinario $${liq.ordinaryAmount.toLocaleString('es-AR')} | Extraordinario $${liq.extraordinaryAmount.toLocaleString('es-AR')} | Saldo anterior $${liq.previousBalance.toLocaleString('es-AR')} | **Total a pagar: $${liq.subtotal.toLocaleString('es-AR')}**`
-    : '- Sin liquidaciones registradas.'
-}
-- Pagos recientes:
-${payments}`
-        })
-        .join('\n\n')
-    : 'No tenés unidades vinculadas como propietario todavía.'
-
-  const notices = ctx.buildingNotices.length
-    ? ctx.buildingNotices.map((n) => `- **${n.title}**: ${n.content}`).join('\n')
-    : 'Sin avisos activos.'
-
-  return `Sos un asistente virtual amigable para la plataforma Countrify.
-Estás ayudando al propietario "${ctx.fullName}".
-
-IMPORTANTE: Solo podés responder sobre la información de ESTE propietario: sus unidades, liquidaciones, pagos y avisos de sus edificios. No tenés acceso a datos de otros propietarios ni información global.
-
-=== SUS UNIDADES Y ESTADO DE CUENTA ===
-${unitsText}
-
-=== AVISOS DEL EDIFICIO ===
-${notices}
-
-Respondé siempre en español rioplatense (usá "vos"), de forma amable y concisa. Ayudá con consultas sobre el saldo de expensas, historial de pagos y avisos del edificio. Si pregunta algo fuera de su scope, indicá que no tenés esa información.`
-}
-
 // ─── main export ──────────────────────────────────────────────────────────────
 
 export function buildSystemPrompt(ctx: AnyContext): string {
@@ -213,7 +172,5 @@ export function buildSystemPrompt(ctx: AnyContext): string {
       return negocioPrompt(ctx)
     case 'super_admin':
       return superAdminPrompt(ctx)
-    case 'propietario':
-      return propietarioPrompt(ctx)
   }
 }

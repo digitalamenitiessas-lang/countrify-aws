@@ -142,6 +142,50 @@ export default async function VecinoLiquidacionPage({ params }: { params: Promis
           </dl>
         </section>
 
+        {/* En qué se gastó (composición de la cuota por rubro) */}
+        {view.expenseBreakdown.ordinary.length > 0 || view.expenseBreakdown.extraordinary.length > 0 ? (
+          <section className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
+            <header className="px-4 py-3 border-b border-slate-200">
+              <div className="text-xs uppercase tracking-wider text-slate-500 font-medium">¿En qué se gastó?</div>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                Composición de tu cuota por rubro, según los gastos del edificio.
+              </p>
+            </header>
+            <div className="divide-y divide-slate-100">
+              {view.expenseBreakdown.ordinary.length > 0 ? (
+                <div className="px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-medium mb-1.5">
+                    Ordinarias
+                  </div>
+                  <dl className="space-y-1.5">
+                    {view.expenseBreakdown.ordinary.map((row) => (
+                      <div key={`ord-${row.category}`} className="flex items-center justify-between gap-3 text-sm">
+                        <dt className="text-slate-600">{row.category}</dt>
+                        <dd className="text-slate-900 tabular-nums">{formatARS(row.amount)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ) : null}
+              {view.expenseBreakdown.extraordinary.length > 0 ? (
+                <div className="px-4 py-3">
+                  <div className="text-[10px] uppercase tracking-wider text-slate-400 font-medium mb-1.5">
+                    Extraordinarias
+                  </div>
+                  <dl className="space-y-1.5">
+                    {view.expenseBreakdown.extraordinary.map((row) => (
+                      <div key={`ext-${row.category}`} className="flex items-center justify-between gap-3 text-sm">
+                        <dt className="text-slate-600">{row.category}</dt>
+                        <dd className="text-slate-900 tabular-nums">{formatARS(row.amount)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ) : null}
+            </div>
+          </section>
+        ) : null}
+
         {/* Recibos pagados */}
         {view.recentPayments.length > 0 ? (
           <section className="rounded-2xl bg-white border border-slate-200 shadow-sm overflow-hidden">
@@ -207,7 +251,7 @@ export default async function VecinoLiquidacionPage({ params }: { params: Promis
         ) : null}
 
         <footer className="text-center text-[11px] text-slate-400 pt-2 pb-6">
-          Generado por Countrify IAdmin
+          Generado por CITIFY IAdmin
           {view.expiresAt ? ` · Válido hasta ${view.expiresAt.slice(0, 10)}` : ''}
         </footer>
       </div>

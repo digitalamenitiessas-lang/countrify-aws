@@ -26,7 +26,7 @@ export async function runAIChat(input: ChatInput): Promise<string> {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
       'HTTP-Referer': 'https://countrify.com.ar',
-      'X-Title': 'Countrify IAdmin',
+      'X-Title': 'CITIFY IAdmin',
     },
     body: JSON.stringify({
       model,

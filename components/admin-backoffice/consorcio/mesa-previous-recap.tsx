@@ -6,7 +6,6 @@ import type { IAdminMesaState, IAdminMonthlyGrid } from '@/lib/types'
 type Props = {
   previousMonth: IAdminMonthlyGrid['months'][number]
   previousState: IAdminMesaState
-  propertyId?: string
 }
 
 const MONTH_LABELS_ES = [
@@ -32,8 +31,7 @@ function formatARS(n: number): string {
  * Ribbon sutil que muestra un recap del mes anterior cuando ya tiene
  * liquidación emitida. Da contexto + empuja a recordar pagos pendientes.
  */
-export function MesaPreviousRecap({ previousMonth, previousState, propertyId }: Props) {
-  const remindersHref = propertyId ? `/iadmin/recordatorios?propertyId=${propertyId}` : '/iadmin/recordatorios'
+export function MesaPreviousRecap({ previousMonth, previousState }: Props) {
   if (!previousState.hasRun) return null
 
   const monthName = `${MONTH_LABELS_ES[previousMonth.month - 1]} ${previousMonth.year}`
@@ -88,7 +86,7 @@ export function MesaPreviousRecap({ previousMonth, previousState, propertyId }: 
                 <span className="text-muted-foreground">
                   {' · '}
                   <span className="font-medium text-foreground">{unitsWithDebt}</span>{' '}
-                  {unitsWithDebt === 1 ? 'vecino debe' : 'residentes deben'}
+                  {unitsWithDebt === 1 ? 'vecino debe' : 'vecinos deben'}
                 </span>
               ) : null}
             </>
@@ -98,7 +96,7 @@ export function MesaPreviousRecap({ previousMonth, previousState, propertyId }: 
       <div className="flex items-center gap-1.5 shrink-0">
         {!fullyCollected && unitsWithDebt > 0 ? (
           <a
-            href={remindersHref}
+            href={`/iadmin/recordatorios`}
             className="inline-flex items-center gap-1.5 rounded-full border border-border/50 bg-background px-3 py-1 text-[11px] text-foreground hover:border-primary/40 hover:bg-muted/30 transition-colors"
           >
             <BellRing className="w-3 h-3" />

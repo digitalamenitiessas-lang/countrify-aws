@@ -24,6 +24,10 @@ export function ExpensePayAction({ expenseId, alreadyPaid, paidFromAccountName, 
   const [accountId, setAccountId] = useState(activeAccounts[0]?.id ?? '')
   const [movDate, setMovDate] = useState(new Date().toISOString().slice(0, 10))
   const [externalRef, setExternalRef] = useState('')
+  // Se activa cuando el server devuelve INSUFFICIENT_FUNDS: ofrece forzar el
+  // pago aunque la cuenta quede en negativo.
+  const [overdraftWarning, setOverdraftWarning] = useState<string | null>(null)
+  const [allowOverdraft, setAllowOverdraft] = useState(false)
 
   if (alreadyPaid) {
     return (
@@ -51,18 +55,25 @@ export function ExpensePayAction({ expenseId, alreadyPaid, paidFromAccountName, 
       return
     }
     startTransition(async () => {
-      try {
-        await payExpense({
-          expenseId,
-          cashAccountId: accountId,
-          movementDate: movDate,
-          externalRef: externalRef.trim() || undefined,
-        })
+      const result = await payExpense({
+        expenseId,
+        cashAccountId: accountId,
+        movementDate: movDate,
+        externalRef: externalRef.trim() || undefined,
+        allowOverdraft,
+      })
+      if (result.ok) {
         toast.success('Pago registrado')
         setOpen(false)
-      } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'Error al registrar pago')
+        setOverdraftWarning(null)
+        setAllowOverdraft(false)
+        return
       }
+      if (result.code === 'INSUFFICIENT_FUNDS') {
+        setOverdraftWarning(result.error)
+        return
+      }
+      toast.error(result.error)
     })
   }
 
@@ -111,9 +122,22 @@ export function ExpensePayAction({ expenseId, alreadyPaid, paidFromAccountName, 
           <Input value={externalRef} onChange={(e) => setExternalRef(e.target.value)} placeholder="Nº de operación bancaria" />
         </div>
       </div>
+      {overdraftWarning ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+          <p className="text-sm text-amber-900">{overdraftWarning}</p>
+          <label className="flex items-center gap-2 text-sm text-amber-900">
+            <input
+              type="checkbox"
+              checked={allowOverdraft}
+              onChange={(e) => setAllowOverdraft(e.target.checked)}
+            />
+            Permitir saldo negativo y registrar el pago igual
+          </label>
+        </div>
+      ) : null}
       <div className="flex justify-end">
-        <Button type="submit" size="sm" disabled={pending}>
-          {pending ? 'Registrando…' : 'Confirmar pago'}
+        <Button type="submit" size="sm" disabled={pending || (overdraftWarning !== null && !allowOverdraft)}>
+          {pending ? 'Registrando…' : overdraftWarning ? 'Forzar pago' : 'Confirmar pago'}
         </Button>
       </div>
     </form>

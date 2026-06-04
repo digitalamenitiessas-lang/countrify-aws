@@ -1,4 +1,8 @@
 import { pgQuery } from '@/lib/db/postgres'
+import { listImputedExpenseLinesByPeriodFromPostgres } from '@/lib/db/iadmin-reads'
+
+/** Una fila del resumen "en qué se gastó": rubro + monto prorrateado a la unidad. */
+export type ExpenseBreakdownRow = { category: string; amount: number }
 
 export type PublicLiquidationView = {
   token: string
@@ -14,11 +18,21 @@ export type PublicLiquidationView = {
   runStatus: string
   ordinaryAmount: number
   extraordinaryAmount: number
+  particularAmount: number
   previousBalance: number
   subtotal: number
   collectedAmount: number
   balanceRemaining: number
   dueDates: Array<{ label: string; date: string; surchargePct: number; amount: number }>
+  /**
+   * Composición de la cuota de la unidad por rubro (gastos del edificio
+   * prorrateados según la participación de la unidad). Vacío si no hay gastos
+   * imputados. Las sumas reconcilian con ordinaryAmount / extraordinaryAmount.
+   */
+  expenseBreakdown: {
+    ordinary: ExpenseBreakdownRow[]
+    extraordinary: ExpenseBreakdownRow[]
+  }
   legalInfo: {
     bank?: { name?: string; cbu?: string; alias?: string; account?: string }
     collectionSchedule?: string
@@ -46,8 +60,10 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
     item_id: string
     ordinary_amount: string | null
     extraordinary_amount: string | null
+    particular_amount: string | null
     previous_balance: string | null
     run_status: string
+    accounting_period_id: string | null
     run_due_dates: any
     administration_legal_info: any
     property_display_name: string | null
@@ -64,7 +80,7 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
     `
       with chosen_holder as (
         select distinct on (unit_id) unit_id, full_name, holder_kind::text as holder_kind, is_active
-        from countrify.iadmin_unit_holders
+        from public.iadmin_unit_holders
         order by unit_id, is_active desc, created_at asc
       )
       select
@@ -72,8 +88,10 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
         i.id as item_id,
         i.ordinary_amount::text as ordinary_amount,
         i.extraordinary_amount::text as extraordinary_amount,
+        i.particular_amount::text as particular_amount,
         i.previous_balance::text as previous_balance,
         r.status::text as run_status,
+        r.accounting_period_id as accounting_period_id,
         r.due_dates as run_due_dates,
         a.legal_info as administration_legal_info,
         mp.display_name as property_display_name,
@@ -83,14 +101,14 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
         ap.period_year, ap.period_month,
         u.code as unit_code, u.kind::text as unit_kind,
         ch.full_name as holder_full_name, ch.holder_kind as holder_kind
-      from countrify.iadmin_item_share_tokens t
-      inner join countrify.iadmin_liquidation_items i on i.id = t.liquidation_item_id
-      inner join countrify.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
-      inner join countrify.iadmin_administrations a on a.id = r.administration_id
-      inner join countrify.iadmin_managed_properties mp on mp.id = r.managed_property_id
-      inner join countrify.buildings b on b.id = mp.building_id
-      left join countrify.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
-      inner join countrify.iadmin_units u on u.id = i.unit_id
+      from public.iadmin_item_share_tokens t
+      inner join public.iadmin_liquidation_items i on i.id = t.liquidation_item_id
+      inner join public.iadmin_liquidation_runs r on r.id = i.liquidation_run_id
+      inner join public.iadmin_administrations a on a.id = r.administration_id
+      inner join public.iadmin_managed_properties mp on mp.id = r.managed_property_id
+      inner join public.buildings b on b.id = mp.building_id
+      left join public.iadmin_accounting_periods ap on ap.id = r.accounting_period_id
+      inner join public.iadmin_units u on u.id = i.unit_id
       left join chosen_holder ch on ch.unit_id = u.id
       where t.token = $1
       limit 1
@@ -112,7 +130,7 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
   }>(
     `
       select receipt_number, paid_at::text as paid_at, amount::text as amount, method
-      from countrify.iadmin_payments
+      from public.iadmin_payments
       where liquidation_item_id = $1 and is_void = false
       order by paid_at desc
     `,
@@ -123,8 +141,9 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
 
   const ordinary = Number(row.ordinary_amount ?? 0)
   const extra = Number(row.extraordinary_amount ?? 0)
+  const particular = Number(row.particular_amount ?? 0)
   const prev = Number(row.previous_balance ?? 0)
-  const subtotal = Math.round((ordinary + extra + prev) * 100) / 100
+  const subtotal = Math.round((ordinary + extra + particular + prev) * 100) / 100
   const balance = Math.max(0, Math.round((subtotal - collectedAmount) * 100) / 100)
 
   const rawDueDates = Array.isArray(row.run_due_dates) ? row.run_due_dates : []
@@ -140,9 +159,18 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
 
   // Incrementar access_count (fire and forget)
   pgQuery(
-    `update countrify.iadmin_item_share_tokens set access_count = coalesce(access_count, 0) + 1, last_accessed_at = now() where token = $1`,
+    `update public.iadmin_item_share_tokens set access_count = coalesce(access_count, 0) + 1, last_accessed_at = now() where token = $1`,
     [token],
   ).catch(() => undefined)
+
+  // --- "En qué se gastó": gastos del edificio agrupados por rubro y
+  // prorrateados a la unidad según su participación en cada tipo de expensa.
+  // Así las sumas reconcilian con ordinaryAmount / extraordinaryAmount. ---
+  const expenseBreakdown = await buildExpenseBreakdown(
+    row.accounting_period_id,
+    ordinary,
+    extra,
+  )
 
   const adminLegal = (row.administration_legal_info ?? {}) as any
   const propertyLegal = (row.property_legal_info ?? {}) as any
@@ -162,11 +190,13 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
     runStatus: row.run_status ?? 'draft',
     ordinaryAmount: ordinary,
     extraordinaryAmount: extra,
+    particularAmount: particular,
     previousBalance: prev,
     subtotal,
     collectedAmount: Math.round(collectedAmount * 100) / 100,
     balanceRemaining: balance,
     dueDates,
+    expenseBreakdown,
     legalInfo: {
       bank: mergedLegal.bank,
       collectionSchedule: mergedLegal.collectionSchedule,
@@ -179,5 +209,92 @@ export async function getPublicLiquidationByToken(token: string): Promise<Public
       amount: Number(p.amount),
       method: p.method,
     })),
+  }
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  general: 'Gastos generales',
+  limpieza: 'Limpieza',
+  mantenimiento: 'Mantenimiento',
+  ascensor: 'Ascensor',
+  ascensores: 'Ascensores',
+  seguridad: 'Seguridad',
+  seguro: 'Seguros',
+  seguros: 'Seguros',
+  sueldos: 'Sueldos y cargas',
+  servicios: 'Servicios',
+  luz: 'Electricidad',
+  agua: 'Agua',
+  gas: 'Gas',
+  expensas: 'Expensas',
+  administracion: 'Administración',
+  honorarios: 'Honorarios',
+  reparaciones: 'Reparaciones',
+  obras: 'Obras',
+  bancarios: 'Gastos bancarios',
+}
+
+function labelForCategory(raw: string | null): string {
+  const key = (raw ?? '').trim().toLowerCase()
+  if (!key) return 'Otros gastos'
+  if (CATEGORY_LABELS[key]) return CATEGORY_LABELS[key]
+  return key.charAt(0).toUpperCase() + key.slice(1)
+}
+
+/**
+ * Agrupa los gastos imputados del período por rubro y los prorratea a la unidad
+ * usando el factor (cuota de la unidad / total del edificio) por tipo de
+ * expensa. Devuelve listas ordenadas por monto desc. Resiliente: ante cualquier
+ * fallo de lectura devuelve listas vacías para no romper la página del vecino.
+ */
+async function buildExpenseBreakdown(
+  accountingPeriodId: string | null,
+  unitOrdinary: number,
+  unitExtraordinary: number,
+): Promise<{ ordinary: ExpenseBreakdownRow[]; extraordinary: ExpenseBreakdownRow[] }> {
+  const empty = { ordinary: [], extraordinary: [] }
+  if (!accountingPeriodId) return empty
+
+  let lines
+  try {
+    lines = await listImputedExpenseLinesByPeriodFromPostgres(accountingPeriodId)
+  } catch {
+    return empty
+  }
+
+  const ordByCat = new Map<string, number>()
+  const extByCat = new Map<string, number>()
+  let buildingOrdinary = 0
+  let buildingExtra = 0
+
+  for (const l of lines) {
+    const amount = Number(l.amount ?? 0)
+    if (!Number.isFinite(amount) || amount === 0) continue
+    const label = labelForCategory(l.category)
+    if (l.expense_kind === 'extraordinaria') {
+      buildingExtra += amount
+      extByCat.set(label, (extByCat.get(label) ?? 0) + amount)
+    } else {
+      buildingOrdinary += amount
+      ordByCat.set(label, (ordByCat.get(label) ?? 0) + amount)
+    }
+  }
+
+  // Factor de prorrateo: lo que paga la unidad sobre el total del edificio.
+  const ordFactor = buildingOrdinary > 0 ? unitOrdinary / buildingOrdinary : 0
+  const extFactor = buildingExtra > 0 ? unitExtraordinary / buildingExtra : 0
+
+  const toRows = (byCat: Map<string, number>, factor: number): ExpenseBreakdownRow[] =>
+    Array.from(byCat.entries())
+      .map(([category, total]) => ({
+        category,
+        amount: Math.round(total * factor * 100) / 100,
+      }))
+      .filter((r) => r.amount > 0)
+      .sort((a, b) => b.amount - a.amount)
+
+  return {
+    ordinary: toRows(ordByCat, ordFactor),
+    extraordinary: toRows(extByCat, extFactor),
   }
 }

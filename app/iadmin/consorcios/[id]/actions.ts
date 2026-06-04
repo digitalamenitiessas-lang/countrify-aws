@@ -4,32 +4,31 @@ import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireIAdmin } from '@/lib/auth'
 import type { UnitProfileRelationship, UserRole } from '@/lib/types'
-import { adminCreateCognitoUser } from '@/lib/aws/cognito'
-import { findProfileById, findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
+import { findProfileById } from '@/lib/db/profiles'
 import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
+import { ensureUnitUserWithCredentials } from '@/lib/iadmin/unit-users'
+import { sendWelcomeEmail } from '@/lib/email/notifications/welcome'
 import {
-  changeAccountingPeriodStatusInPostgres,
   closeActiveHoldersOfKindInPostgres,
   deactivateActivePrincipalMembershipsInPostgres,
   deactivateBuildingInformationInPostgres,
   deactivateMembershipByIdInPostgres,
   deactivateUnitInPostgres,
   endHolderInPostgres,
-  findOwnerHolderForProfileFromPostgres,
   findUnitProfileMembershipFromPostgres,
-  getAccountingPeriodWithAdminFromPostgres,
   getBuildingIdForPropertyFromPostgres,
+  getHolderForAccessFromPostgres,
   getHolderWithAdminFromPostgres,
   getManagedPropertyAdminIdFromPostgres,
+  getManagedPropertyOperationalSettingsFromPostgres,
   getMembershipWithAdminFromPostgres,
   getUnitFullScopeFromPostgres,
   getUnitWithAdminFromPostgres,
   insertBuildingInformationInPostgres,
-  insertOwnerHolderInPostgres,
   insertUnitFromCrudInPostgres,
   insertUnitHolderFromCrudInPostgres,
-  setProfileBuildingInPostgres,
   updateManagedPropertyInPostgres,
+  updateManagedPropertyOperationalSettingsInPostgres,
   updatePropertyLegalInfoInPostgres,
   updateUnitInPostgres,
   upsertAccountingPeriodOpenInPostgres,
@@ -155,6 +154,67 @@ export async function updatePropertyLegalInfo(input: z.input<typeof updateProper
     entityType: 'iadmin_managed_properties',
     entityId: parsed.propertyId,
     action: 'property.legal_updated',
+  })
+
+  revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
+}
+
+const operationalSettingsSchema = z.object({
+  dueDateRules: z
+    .array(
+      z.object({
+        label: z.string().trim().min(1).max(40),
+        day: z.number().int().min(1).max(28),
+        surchargePct: z.number().min(0).max(100),
+      }),
+    )
+    .min(1)
+    .max(3)
+    .optional(),
+  paymentAllocationMode: z.enum(['fifo_oldest_first']).optional(),
+  closePeriodPolicy: z.enum(['issued_required']).optional(),
+  allowManualAdjustments: z.boolean().optional(),
+  legalDebtNotice: z.string().trim().max(2000).optional(),
+})
+
+const updateOperationalSettingsSchema = z.object({
+  propertyId: z.string().uuid(),
+  operationalSettings: operationalSettingsSchema,
+})
+
+export async function updatePropertyOperationalSettings(
+  input: z.input<typeof updateOperationalSettingsSchema>,
+) {
+  const parsed = updateOperationalSettingsSchema.parse(input)
+
+  const property = await getManagedPropertyOperationalSettingsFromPostgres(parsed.propertyId)
+  if (!property) throw new Error('Consorcio no encontrado')
+
+  const { profile } = await requireIAdmin({
+    capability: 'admin.settings.manage',
+    administrationId: property.administration_id,
+  })
+
+  const nextSettings = {
+    paymentAllocationMode: 'fifo_oldest_first',
+    closePeriodPolicy: 'issued_required',
+    allowManualAdjustments: false,
+    ...(property.operational_settings ?? {}),
+    ...(parsed.operationalSettings ?? {}),
+  }
+
+  await updateManagedPropertyOperationalSettingsInPostgres({
+    propertyId: parsed.propertyId,
+    operationalSettings: nextSettings,
+  })
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: property.administration_id,
+    actorProfileId: profile.id,
+    entityType: 'iadmin_managed_properties',
+    entityId: parsed.propertyId,
+    action: 'property.operational_settings_updated',
+    metadata: nextSettings,
   })
 
   revalidatePath(`/iadmin/consorcios/${parsed.propertyId}`)
@@ -366,63 +426,18 @@ export async function endUnitHolder(input: z.input<typeof endHolderSchema>) {
 
 const createUnitUserSchema = z.object({
   unitId: z.string().uuid(),
-  relationshipType: z.enum(['propietario', 'vecino_principal', 'vecino_adicional']),
+  relationshipType: z.enum(['vecino_principal', 'vecino_adicional']),
+  // Vínculo legal del contacto que se crea junto con el usuario. Se pide
+  // explícitamente (no se asume propietario). Sólo se usa si hay que crear un
+  // holder nuevo; si ya existe un contacto con ese email, se linkea y se respeta
+  // su vínculo actual.
+  holderKind: z.enum(['propietario', 'inquilino', 'apoderado', 'otro']),
   fullName: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(160),
   phone: z.string().trim().max(40).nullable().optional(),
   password: z.string().min(8).max(72),
   isPrimaryOwner: z.boolean().optional().default(false),
 })
-
-function roleForRelationship(relationshipType: UnitProfileRelationship): UserRole {
-  return relationshipType === 'propietario' ? 'propietario' : 'vecino'
-}
-
-function avatarFromName(fullName: string) {
-  return (
-    fullName
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join('') || 'U'
-  )
-}
-
-async function ensureProfileForUnit(input: {
-  fullName: string
-  email: string
-  phone: string | null
-  password: string
-  role: UserRole
-  buildingId: string
-}): Promise<string> {
-  const normalizedEmail = input.email.toLowerCase()
-  const existing = await findProfileByEmail(normalizedEmail)
-
-  let profileId = existing?.id
-  if (!profileId) {
-    const { sub } = await adminCreateCognitoUser({
-      email: normalizedEmail,
-      password: input.password,
-      fullName: input.fullName,
-    })
-    profileId = sub
-  }
-
-  await upsertProfile({
-    id: profileId,
-    email: normalizedEmail,
-    fullName: input.fullName,
-    avatarText: avatarFromName(input.fullName),
-    role: input.role,
-    phone: input.phone,
-    buildingId: input.buildingId,
-    businessId: null,
-  })
-
-  return profileId
-}
 
 export async function createUnitUser(input: z.input<typeof createUnitUserSchema>) {
   const parsed = createUnitUserSchema.parse(input)
@@ -435,73 +450,96 @@ export async function createUnitUser(input: z.input<typeof createUnitUserSchema>
     administrationId: scope.administrationId,
   })
 
-  const role = roleForRelationship(parsed.relationshipType)
-  const targetProfileId = await ensureProfileForUnit({
+  const result = await ensureUnitUserWithCredentials({
+    scope: {
+      unitId: scope.unitId,
+      unitCode: scope.unitCode,
+      buildingId: scope.buildingId,
+      administrationId: scope.administrationId,
+    },
     fullName: parsed.fullName,
     email: parsed.email,
     phone: parsed.phone ?? null,
-    password: parsed.password,
-    role,
-    buildingId: scope.buildingId,
-  })
-
-  if (parsed.relationshipType === 'vecino_principal') {
-    await deactivateActivePrincipalMembershipsInPostgres(scope.unitId)
-  }
-
-  const existingMembership = await findUnitProfileMembershipFromPostgres({
-    unitId: scope.unitId,
-    profileId: targetProfileId,
     relationshipType: parsed.relationshipType,
-  })
-
-  await upsertUnitProfileMembershipInPostgres({
-    membershipId: existingMembership?.id ?? null,
-    unitId: scope.unitId,
-    buildingId: scope.buildingId,
-    profileId: targetProfileId,
-    relationshipType: parsed.relationshipType,
-    isPrimary: parsed.relationshipType === 'propietario' ? parsed.isPrimaryOwner : false,
-    createdByProfileId: profile.id,
-  })
-
-  if (parsed.relationshipType === 'propietario') {
-    const existingHolder = await findOwnerHolderForProfileFromPostgres({
-      unitId: scope.unitId,
-      profileId: targetProfileId,
-    })
-    if (!existingHolder) {
-      await insertOwnerHolderInPostgres({
-        unitId: scope.unitId,
-        profileId: targetProfileId,
-        fullName: parsed.fullName,
-        email: parsed.email.toLowerCase(),
-        phone: parsed.phone ?? null,
-      })
-    }
-  }
-
-  await insertIAdminAuditLogInPostgres({
-    administrationId: scope.administrationId,
     actorProfileId: profile.id,
-    entityType: 'unit_profile_memberships',
-    entityId: scope.unitId,
-    action: 'unit_user.created',
-    metadata: {
-      unit_code: scope.unitCode,
-      profile_id: targetProfileId,
-      relationship_type: parsed.relationshipType,
-    },
+    password: parsed.password,
+    via: 'individual',
+    holderKind: parsed.holderKind,
+  })
+
+  // Mail de bienvenida con credenciales (best-effort; sólo si se creó el perfil).
+  void sendWelcomeEmail({
+    profileId: result.profileId,
+    reason: 'neighbor_added',
+    temporaryPassword: result.temporaryPassword ?? undefined,
   })
 
   revalidatePath(`/iadmin/consorcios/${scope.managedPropertyId}`)
-  return { profileId: targetProfileId }
+  return { profileId: result.profileId }
+}
+
+// Crea el acceso (login) para un contacto YA existente. Toma nombre+email del
+// holder (no se re-piden) y linkea el perfil al holder vía profile_id. El
+// vínculo legal queda como está en el contacto (acá no se pregunta nada). El eje
+// "responsable de pago" se elige con isResponsableDePago → relationship_type.
+const createAccessForHolderSchema = z.object({
+  holderId: z.string().uuid(),
+  isResponsableDePago: z.boolean().optional().default(false),
+})
+
+export async function createAccessForHolder(
+  input: z.input<typeof createAccessForHolderSchema>,
+) {
+  const parsed = createAccessForHolderSchema.parse(input)
+
+  const holder = await getHolderForAccessFromPostgres(parsed.holderId)
+  if (!holder) throw new Error('Contacto no encontrado')
+  if (!holder.is_active) throw new Error('El contacto no está activo')
+  if (holder.profile_id) throw new Error('Este contacto ya tiene un usuario asociado')
+
+  const email = holder.email?.trim()
+  if (!email) {
+    throw new Error('Agregá un email al contacto antes de crear su acceso')
+  }
+  if (holder.full_name.trim().length < 2) {
+    throw new Error('El contacto necesita un nombre válido para crear el acceso')
+  }
+
+  const { profile } = await requireIAdmin({
+    capability: 'holders.manage',
+    administrationId: holder.administration_id,
+  })
+
+  const result = await ensureUnitUserWithCredentials({
+    scope: {
+      unitId: holder.unit_id,
+      unitCode: holder.unit_code,
+      buildingId: holder.building_id,
+      administrationId: holder.administration_id,
+    },
+    fullName: holder.full_name,
+    email,
+    phone: holder.phone,
+    relationshipType: parsed.isResponsableDePago ? 'vecino_principal' : 'vecino_adicional',
+    actorProfileId: profile.id,
+    via: 'from_holder',
+    holderId: holder.id,
+  })
+
+  void sendWelcomeEmail({
+    profileId: result.profileId,
+    reason: 'neighbor_added',
+    temporaryPassword: result.temporaryPassword ?? undefined,
+  })
+
+  revalidatePath(`/iadmin/consorcios/${holder.managed_property_id}`)
+  return { profileId: result.profileId }
 }
 
 const linkExistingProfileSchema = z.object({
   unitId: z.string().uuid(),
   profileId: z.string().uuid(),
-  relationshipType: z.enum(['propietario', 'vecino_principal', 'vecino_adicional']),
+  relationshipType: z.enum(['vecino_principal', 'vecino_adicional']),
   isPrimaryOwner: z.boolean().optional().default(false),
 })
 
@@ -518,12 +556,8 @@ export async function linkExistingProfileToUnit(input: z.input<typeof linkExisti
 
   const target = await findProfileById(parsed.profileId)
   if (!target) throw new Error('Vecino no encontrado')
-  if (target.role !== 'vecino' && target.role !== 'propietario') {
-    throw new Error('Solo se pueden vincular vecinos o propietarios')
-  }
-  const buildingMoved = target.buildingId !== scope.buildingId
-  if (buildingMoved) {
-    await setProfileBuildingInPostgres(parsed.profileId, scope.buildingId)
+  if (target.buildingId !== scope.buildingId) {
+    throw new Error('El vecino no pertenece a este consorcio')
   }
 
   if (parsed.relationshipType === 'vecino_principal') {
@@ -542,25 +576,9 @@ export async function linkExistingProfileToUnit(input: z.input<typeof linkExisti
     buildingId: scope.buildingId,
     profileId: parsed.profileId,
     relationshipType: parsed.relationshipType,
-    isPrimary: parsed.relationshipType === 'propietario' ? parsed.isPrimaryOwner : false,
+    isPrimary: false,
     createdByProfileId: actor.id,
   })
-
-  if (parsed.relationshipType === 'propietario') {
-    const existingHolder = await findOwnerHolderForProfileFromPostgres({
-      unitId: scope.unitId,
-      profileId: parsed.profileId,
-    })
-    if (!existingHolder) {
-      await insertOwnerHolderInPostgres({
-        unitId: scope.unitId,
-        profileId: parsed.profileId,
-        fullName: target.fullName,
-        email: target.email.toLowerCase(),
-        phone: target.phone ?? null,
-      })
-    }
-  }
 
   await insertIAdminAuditLogInPostgres({
     administrationId: scope.administrationId,
@@ -572,8 +590,6 @@ export async function linkExistingProfileToUnit(input: z.input<typeof linkExisti
       unit_code: scope.unitCode,
       profile_id: parsed.profileId,
       relationship_type: parsed.relationshipType,
-      building_moved: buildingMoved,
-      previous_building_id: target.buildingId,
     },
   })
 
@@ -719,35 +735,3 @@ export async function openAccountingPeriod(input: z.input<typeof openPeriodSchem
   return { id }
 }
 
-const changePeriodStatusSchema = z.object({
-  periodId: z.string().uuid(),
-  nextStatus: z.enum(['open', 'locked', 'closed']),
-})
-
-export async function changePeriodStatus(input: z.input<typeof changePeriodStatusSchema>) {
-  const parsed = changePeriodStatusSchema.parse(input)
-
-  const period = await getAccountingPeriodWithAdminFromPostgres(parsed.periodId)
-  if (!period) throw new Error('Periodo no encontrado')
-
-  const { profile } = await requireIAdmin({
-    capability: parsed.nextStatus === 'closed' ? 'liquidations.close' : 'liquidations.create',
-    administrationId: period.administration_id,
-  })
-
-  await changeAccountingPeriodStatusInPostgres({
-    periodId: parsed.periodId,
-    nextStatus: parsed.nextStatus,
-    closedByProfileId: parsed.nextStatus === 'closed' ? profile.id : null,
-  })
-
-  await insertIAdminAuditLogInPostgres({
-    administrationId: period.administration_id,
-    actorProfileId: profile.id,
-    entityType: 'iadmin_accounting_periods',
-    entityId: parsed.periodId,
-    action: `period.${parsed.nextStatus}`,
-  })
-
-  revalidatePath(`/iadmin/consorcios/${period.managed_property_id}`)
-}

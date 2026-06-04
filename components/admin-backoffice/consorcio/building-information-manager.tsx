@@ -23,8 +23,8 @@ import {
 } from '@/app/iadmin/consorcios/[id]/actions'
 
 const VISIBILITY_OPTIONS: Array<{ value: BuildingInformationVisibility; label: string }> = [
-  { value: 'residentes', label: 'Residentes y propietarios' },
-  { value: 'residentes', label: 'Solo residentes' },
+  { value: 'residentes', label: 'Vecinos y propietarios' },
+  { value: 'vecinos', label: 'Solo vecinos' },
   { value: 'propietarios', label: 'Solo propietarios' },
 ]
 
@@ -144,7 +144,7 @@ export function BuildingInformationManager({
 
       {items.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border/50 p-8 text-center text-sm text-muted-foreground">
-          Todavia no hay informacion general cargada para este country.
+          Todavia no hay informacion general cargada para este edificio.
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -178,7 +178,7 @@ export function BuildingInformationManager({
         <AlertDialogHeader>
           <AlertDialogTitle>Ocultar informacion</AlertDialogTitle>
           <AlertDialogDescription>
-            {confirmItem ? `Se ocultara "${confirmItem.title}" para los residentes.` : 'Se ocultara este contenido.'}
+            {confirmItem ? `Se ocultara "${confirmItem.title}" para los vecinos.` : 'Se ocultara este contenido.'}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

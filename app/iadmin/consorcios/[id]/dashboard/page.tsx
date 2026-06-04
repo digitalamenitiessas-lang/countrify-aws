@@ -1,33 +1,29 @@
 import { notFound } from 'next/navigation'
 import { Building2, FileSpreadsheet, ShieldAlert } from 'lucide-react'
 import Link from 'next/link'
-import { ClosingChecklistCard } from '@/components/admin-backoffice/consorcio/closing-checklist-card'
 import {
-  AccountsPayableWidget,
-  BalancesWidget,
+  CollectionTrendChart,
+  OverdueChart,
+  ProvidersPayableWidget,
+} from '@/components/admin-backoffice/consorcio/dashboard-charts'
+import {
   DashboardQuickStats,
-  OverdueWidget,
   PeriodCollectionsWidget,
 } from '@/components/admin-backoffice/consorcio/dashboard-widgets'
 import { ProjectionCard } from '@/components/admin-backoffice/consorcio/projection-card'
-import { CloneRecurringButton } from '@/components/admin-backoffice/gastos/clone-recurring-button'
 import { can, requireIAdmin } from '@/lib/auth'
-import { getIAdminClosingChecklist, getIAdminConsorcioDashboard } from '@/lib/data'
+import { getIAdminConsorcioDashboard } from '@/lib/data'
 
 export default async function ConsorcioInicioPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const { context } = await requireIAdmin({ capability: 'consorcio.view' })
 
-  const [dashboard, checklist] = await Promise.all([
-    getIAdminConsorcioDashboard(id),
-    getIAdminClosingChecklist(id),
-  ])
+  const dashboard = await getIAdminConsorcioDashboard(id)
   if (!dashboard) {
     notFound()
   }
 
   const canViewReports = can(context, 'reports.view', { administrationId: dashboard.property.administrationId })
-  const canManageRecurring = can(context, 'expenses.recurring.manage', { administrationId: dashboard.property.administrationId })
 
   return (
     <div className="space-y-6">
@@ -35,34 +31,25 @@ export default async function ConsorcioInicioPage({ params }: { params: Promise<
         activeUnits={dashboard.activeUnitsCount}
         pendingExpenses={dashboard.pendingExpenses}
         pendingDocuments={dashboard.pendingDocuments}
-        totalBalance={dashboard.totalBalance}
+        collectionRatePct={dashboard.periodCollections.collectionRatePct}
       />
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        <BalancesWidget balances={dashboard.balances} totalBalance={dashboard.totalBalance} />
-        <AccountsPayableWidget
-          items={dashboard.accountsPayable}
-          totalPayable={dashboard.totalPayable}
-        />
-      </div>
+      <CollectionTrendChart points={dashboard.monthlyTrend} />
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
         <PeriodCollectionsWidget data={dashboard.periodCollections} />
-        <OverdueWidget
+        <OverdueChart
           buckets={dashboard.overdueBuckets}
           totalAmount={dashboard.totalOverdueAmount}
           totalUnits={dashboard.totalOverdueUnits}
         />
       </div>
 
-      {checklist ? <ClosingChecklistCard checklist={checklist} /> : null}
-
-      {canManageRecurring ? (
-        <CloneRecurringButton
-          propertyId={id}
-          recurringCount={dashboard.recurringProvidersCount}
-        />
-      ) : null}
+      <ProvidersPayableWidget
+        propertyId={id}
+        groups={dashboard.accountsPayable}
+        total={dashboard.totalPayable}
+      />
 
       {canViewReports ? <ProjectionCard propertyId={id} /> : null}
 

@@ -115,8 +115,7 @@ Generá las 3 versiones como JSON.`
 
 // ----------------------------------------------------------------------------
 // Publish / edit / delete announcements. El admin compone con o sin AI y
-// despues publica: persistimos comunicado + audit log. Email a vecinos se
-// engancha en Checkpoint 2.
+// despues publica: persistimos + disparamos mail a vecinos opt-in.
 // ----------------------------------------------------------------------------
 
 const publishSchema = z.object({
@@ -131,16 +130,18 @@ async function assertAdminOwnsBuilding(buildingId: string): Promise<{
   administrationId: string
   profileId: string
 }> {
+  // El building debe pertenecer a un managed_property que esté bajo la
+  // administración del usuario logueado. Confirmamos eso + capability.
   const res = await pgQuery<{ administration_id: string }>(
     `select mp.administration_id
-       from countrify.iadmin_managed_properties mp
+       from public.iadmin_managed_properties mp
       where mp.building_id = $1
       limit 1`,
     [buildingId],
   )
   const administrationId = res.rows[0]?.administration_id
   if (!administrationId) {
-    throw new Error('El edificio no esta asociado a una administracion.')
+    throw new Error('El edificio no está asociado a una administración.')
   }
   const { profile } = await requireIAdmin({
     capability: 'communications.send',
@@ -175,9 +176,7 @@ export async function publishAnnouncement(input: z.input<typeof publishSchema>) 
     metadata: { building_id: parsed.buildingId, title: parsed.title, pinned: parsed.pinned ?? false },
   })
 
-  // Mail a vecinos opt-in fire-and-forget. Si SES esta en sandbox solo van
-  // a llegar a destinatarios verificados; el resto queda como warn en logs
-  // y no bloquea el publish.
+  // Mail a vecinos opt-in fire-and-forget.
   void notifyAnnouncementPublished(id)
 
   revalidatePath('/iadmin/comunicaciones')

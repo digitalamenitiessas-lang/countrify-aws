@@ -22,9 +22,10 @@ export default async function ComunicacionesPage() {
     listAnnouncementsByAdminFromPostgres({ administrationId }),
   ])
 
+  // Buildings que el admin gestiona — los exponemos al form de publish.
   const buildings = (portfolio?.properties ?? []).map((p) => ({
     id: p.buildingId,
-    name: p.buildingName ?? p.displayName ?? 'Consorcio',
+    name: p.buildingName ?? p.displayName ?? 'Edificio',
   }))
 
   const announcements = announcementRows.map((row) => ({
@@ -43,10 +44,11 @@ export default async function ComunicacionesPage() {
     <div className="space-y-6">
       <header className="glass-card rounded-2xl p-6">
         <p className="text-xs uppercase tracking-wider text-primary font-medium">Comunicaciones</p>
-        <h1 className="font-serif text-2xl font-bold text-foreground mt-1">Comunicados al consorcio</h1>
+        <h1 className="font-serif text-2xl font-bold text-foreground mt-1">Comunicados al edificio</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Publicá un comunicado al feed de vecinos. Más abajo tenés el redactor con IA por si querés
-          generar 3 versiones (cartelera, email, WhatsApp) antes de publicar.
+          Publicá un comunicado al feed de vecinos y se manda automáticamente por mail a los que tengan
+          activada esa preferencia. Abajo tenés el redactor con IA por si querés generar 3 versiones
+          (cartelera, email, WhatsApp) antes de publicar.
         </p>
       </header>
 

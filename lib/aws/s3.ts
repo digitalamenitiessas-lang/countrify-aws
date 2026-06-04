@@ -120,6 +120,31 @@ export async function createBusinessAssetUploadUrl(params: {
   }
 }
 
+export function buildPaymentClaimObjectKey(
+  administrationId: string,
+  unitId: string,
+  fileName: string,
+) {
+  const { ext, safeName } = splitFileName(fileName, 'comprobante', 'bin')
+  return `private/payment-claims/${administrationId}/${unitId}/${Date.now()}-${safeName}.${ext}`
+}
+
+export async function createPaymentClaimUploadUrl(params: {
+  administrationId: string
+  unitId: string
+  fileName: string
+  contentType: string
+}) {
+  const objectKey = buildPaymentClaimObjectKey(params.administrationId, params.unitId, params.fileName)
+  const command = new PutObjectCommand({
+    Bucket: getS3Bucket(),
+    Key: objectKey,
+    ContentType: params.contentType || 'application/octet-stream',
+  })
+  const uploadUrl = await getSignedUrl(getS3Client(), command, { expiresIn: 300 })
+  return { objectKey, uploadUrl }
+}
+
 export async function createExpenseDocumentUploadUrl(params: {
   administrationId: string
   expenseId: string

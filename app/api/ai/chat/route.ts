@@ -5,13 +5,12 @@ import {
   buildConsorcioContext,
   buildNegocioContext,
   buildSuperAdminContext,
-  buildPropietarioContext,
 } from '@/lib/ai/context-builders'
 import { buildSystemPrompt } from '@/lib/ai/system-prompts'
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? 'meta-llama/llama-3.3-8b-instruct:free'
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://citify.app'
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://countrify.com.ar'
 
 export async function POST(req: NextRequest) {
   const profile = await getCurrentProfile()
@@ -19,7 +18,7 @@ export async function POST(req: NextRequest) {
     return new Response(JSON.stringify({ error: 'No autenticado.' }), { status: 401 })
   }
 
-  const role = profile.role as 'super_admin' | 'negocio_admin' | 'consorcio_admin' | 'propietario' | 'vecino'
+  const role = profile.role as 'super_admin' | 'negocio_admin' | 'consorcio_admin' | 'vecino'
 
   let messages: { role: 'user' | 'assistant'; content: string }[]
   try {
@@ -46,9 +45,6 @@ export async function POST(req: NextRequest) {
       case 'super_admin':
         ctx = await buildSuperAdminContext()
         break
-      case 'propietario':
-        ctx = await buildPropietarioContext(profile.id)
-        break
     }
     if (!ctx) throw new Error('No se pudo construir el contexto.')
     systemPrompt = buildSystemPrompt(ctx)
@@ -70,7 +66,7 @@ export async function POST(req: NextRequest) {
       Authorization: `Bearer ${OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': SITE_URL,
-      'X-Title': 'Citify Assistant',
+      'X-Title': 'Countrify Assistant',
     },
     body: JSON.stringify({
       model: OPENROUTER_MODEL,

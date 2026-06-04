@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo, useRef, useState, useTransition } from 'react'
-import { CheckCircle2, Loader2, Plus, Search, Sparkles, UploadCloud, X, Zap } from 'lucide-react'
+import Link from 'next/link'
+import { AlertCircle, CheckCircle2, Loader2, Plus, Search, Sparkles, UploadCloud, X, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -16,9 +17,17 @@ type Props = {
   administrationId: string
   properties: Pick<IAdminManagedProperty, 'id' | 'displayName' | 'buildingName'>[]
   providers: Pick<IAdminProvider, 'id' | 'name' | 'isActive' | 'defaultCategory' | 'defaultDescription'>[]
+  // Unidades activas por consorcio, para cargar un "gasto particular" (cargo
+  // asignado a una sola unidad, no prorrateado).
+  unitsByProperty?: Record<string, { id: string; code: string; kind: string }[]>
+  // Cuentas (banco/caja) por consorcio, para registrar desde dónde se paga el
+  // gasto y mantener la caja al día.
+  accountsByProperty?: Record<string, { id: string; name: string; isActive: boolean }[]>
 }
 
-export function NewExpenseForm({ administrationId, properties, providers }: Props) {
+const DOCUMENT_TYPES = ['Factura A', 'Factura B', 'Factura C', 'Recibo', 'Ticket', 'Nota de crédito', 'Otro']
+
+export function NewExpenseForm({ administrationId, properties, providers, unitsByProperty = {}, accountsByProperty = {} }: Props) {
   const [open, setOpen] = useState(false)
   const [pending, startTransition] = useTransition()
 
@@ -28,6 +37,34 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
   const [issuedAt, setIssuedAt] = useState(() => new Date().toISOString().slice(0, 10))
   const [category, setCategory] = useState('')
   const [expenseKind, setExpenseKind] = useState<IAdminExpenseKind>('ordinaria')
+
+  // Gasto particular: si se activa, el gasto va entero a una unidad (no se
+  // prorratea). Por defecto es un gasto común del edificio.
+  const [isParticular, setIsParticular] = useState(false)
+  const [unitId, setUnitId] = useState('')
+
+  // Comprobante (tipo + número), para el detalle de egresos de la caja.
+  const [documentType, setDocumentType] = useState('')
+  const [documentNumber, setDocumentNumber] = useState('')
+
+  // Pago: si se elige una cuenta, registramos el egreso en esa cuenta y la caja
+  // queda al día. Por defecto vacío = gasto cargado pero "no pagado" todavía.
+  const [cashAccountId, setCashAccountId] = useState('')
+  const [paidAt, setPaidAt] = useState(() => new Date().toISOString().slice(0, 10))
+  // Override de saldo: se activa cuando el server devuelve INSUFFICIENT_FUNDS.
+  const [overdraftWarning, setOverdraftWarning] = useState<string | null>(null)
+  const [allowOverdraft, setAllowOverdraft] = useState(false)
+
+  // Período al que se imputa el gasto. Por defecto el mes en curso, pero el
+  // admin puede elegir otro (ej: cargar gastos de mayo cuando ya estamos en junio
+  // y el período de mayo sigue abierto).
+  const now = new Date()
+  const [periodYear, setPeriodYear] = useState<number>(now.getFullYear())
+  const [periodMonth, setPeriodMonth] = useState<number>(now.getMonth() + 1)
+
+  // Banner inline para errores que el admin necesita ver en el form (no se le
+  // van como toast). Ej: período ya liquidado.
+  const [serverError, setServerError] = useState<string | null>(null)
 
   // Proveedor autocomplete
   const [providerInput, setProviderInput] = useState('')
@@ -49,6 +86,9 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
 
   const activeProviders = useMemo(() => providers.filter((p) => p.isActive), [providers])
 
+  const units = unitsByProperty[managedPropertyId] ?? []
+  const accounts = accountsByProperty[managedPropertyId] ?? []
+
   const providerMatches = useMemo(() => {
     const query = providerInput.trim().toLowerCase()
     if (!query) return activeProviders.slice(0, 8)
@@ -68,8 +108,18 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
     setDescription('')
     setAmount('')
     setIssuedAt(new Date().toISOString().slice(0, 10))
+    setPeriodYear(now.getFullYear())
+    setPeriodMonth(now.getMonth() + 1)
     setCategory('')
     setExpenseKind('ordinaria')
+    setIsParticular(false)
+    setUnitId('')
+    setDocumentType('')
+    setDocumentNumber('')
+    setCashAccountId('')
+    setPaidAt(new Date().toISOString().slice(0, 10))
+    setOverdraftWarning(null)
+    setAllowOverdraft(false)
     setProviderInput('')
     setSelectedProvider(null)
     setProviderOpen(false)
@@ -181,6 +231,10 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
       toast.error('Descripcion obligatoria')
       return
     }
+    if (isParticular && !unitId) {
+      toast.error('Elegí la unidad del gasto particular')
+      return
+    }
 
     const providerPayload = selectedProvider
       ? { providerId: selectedProvider.id, providerName: undefined }
@@ -205,24 +259,54 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
         const result = await createExpense({
           administrationId,
           managedPropertyId,
+          periodYear,
+          periodMonth,
           description: description.trim(),
           amount: numericAmount,
           currency: 'ARS',
           issuedAt: issuedAt || null,
           category: category.trim() || null,
           expenseKind,
+          unitId: isParticular && unitId ? unitId : null,
+          documentType: documentType.trim() || null,
+          documentNumber: documentNumber.trim() || null,
+          cashAccountId: cashAccountId || null,
+          paidAt: cashAccountId ? paidAt || null : null,
+          allowOverdraft,
           draftDocument,
           ...providerPayload,
         })
+        if (!result.ok) {
+          // Saldo insuficiente: en vez del banner de error, ofrecemos forzar el
+          // egreso marcando "permitir saldo negativo".
+          if (result.code === 'INSUFFICIENT_FUNDS') {
+            setOverdraftWarning(result.error)
+            return
+          }
+          setServerError(result.error)
+          toast.error('No se pudo cargar el gasto', {
+            description: result.error,
+            duration: 8000,
+          })
+          return
+        }
         if (result.status === 'imputed') {
           toast.success('Gasto cargado e imputado al periodo')
         } else {
           toast.success('Gasto cargado. Quedo pendiente de aprobacion.')
         }
+        setServerError(null)
         reset()
         setOpen(false)
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : 'No se pudo crear el gasto')
+        // Solo errores realmente inesperados (red, runtime). Los de negocio
+        // vienen como result.ok = false con mensaje detallado.
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'Error inesperado. Intentá de nuevo o avisá al equipo.'
+        setServerError(message)
+        toast.error('No se pudo cargar el gasto', { description: message, duration: 8000 })
       }
     })
   }
@@ -238,8 +322,36 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
     )
   }
 
+  const isPeriodLiquidatedError =
+    serverError != null && /ya liquidado|ya cerrado|ya emitida/i.test(serverError)
+
   return (
     <form onSubmit={handleSubmit} className="glass-card rounded-2xl p-5 space-y-4">
+      {serverError ? (
+        <div className="rounded-lg border-2 border-rose-300 bg-rose-50 p-3 flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-700 mt-0.5 shrink-0" />
+          <div className="flex-1 text-sm text-rose-900">
+            <div className="font-medium">No se pudo cargar el gasto</div>
+            <div className="text-xs mt-0.5">{serverError}</div>
+            {isPeriodLiquidatedError ? (
+              <Link
+                href="/iadmin/liquidaciones"
+                className="mt-2 inline-block text-xs font-medium underline"
+              >
+                Ir a Liquidaciones →
+              </Link>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => setServerError(null)}
+            className="text-rose-700 hover:text-rose-900"
+            aria-label="Cerrar"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ) : null}
       <div className="flex items-center justify-between">
         <div>
           <h3 className="font-medium text-foreground flex items-center gap-2">
@@ -247,7 +359,8 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
             Cargar gasto
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Queda imputado al periodo abierto del mes en curso.
+            Elegí a qué período se imputa. Si la liquidación de ese mes ya fue emitida, no vas
+            a poder cargar el gasto.
           </p>
         </div>
         <button
@@ -374,7 +487,14 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
               id="property"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               value={managedPropertyId}
-              onChange={(e) => setManagedPropertyId(e.target.value)}
+              onChange={(e) => {
+                setManagedPropertyId(e.target.value)
+                // La lista de unidades y cuentas cambia por consorcio: limpiamos
+                // las selecciones para no apuntar a otra unidad/cuenta.
+                setIsParticular(false)
+                setUnitId('')
+                setCashAccountId('')
+              }}
             >
               {properties.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -486,6 +606,60 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
           <Input id="issuedAt" type="date" value={issuedAt} onChange={(e) => setIssuedAt(e.target.value)} />
         </div>
 
+        {/* Comprobante: tipo + número, para el detalle de egresos de la caja. */}
+        <div className="space-y-1.5">
+          <Label htmlFor="documentType">Tipo de comprobante</Label>
+          <select
+            id="documentType"
+            value={documentType}
+            onChange={(e) => setDocumentType(e.target.value)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            <option value="">Sin comprobante</option>
+            {DOCUMENT_TYPES.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="documentNumber">Nº de comprobante</Label>
+          <Input
+            id="documentNumber"
+            value={documentNumber}
+            onChange={(e) => setDocumentNumber(e.target.value)}
+            placeholder="0001-00001234"
+            maxLength={40}
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>Período de imputación</Label>
+          <div className="flex gap-2">
+            <select
+              value={periodMonth}
+              onChange={(e) => setPeriodMonth(Number(e.target.value))}
+              className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'].map((label, idx) => (
+                <option key={idx + 1} value={idx + 1}>{label}</option>
+              ))}
+            </select>
+            <select
+              value={periodYear}
+              onChange={(e) => setPeriodYear(Number(e.target.value))}
+              className="w-24 rounded-md border border-input bg-background px-3 py-2 text-sm"
+            >
+              {Array.from({ length: 5 }, (_, i) => now.getFullYear() - 2 + i).map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Por defecto: mes actual. Cambialo si cargás gastos retroactivos a un período abierto.
+          </p>
+        </div>
+
         <div className="space-y-1.5 md:col-span-2">
           <Label htmlFor="kind">Tipo de expensa</Label>
           <div className="flex gap-2">
@@ -513,11 +687,106 @@ export function NewExpenseForm({ administrationId, properties, providers }: Prop
             </button>
           </div>
         </div>
+
+        {/* Gasto particular: cargo asignado a una sola unidad (no prorrateado).
+            Default off = gasto común del edificio. */}
+        {units.length > 0 ? (
+          <div className="space-y-2 md:col-span-2 rounded-lg border border-border/60 bg-muted/30 p-3">
+            <label className="flex items-start gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={isParticular}
+                onChange={(e) => {
+                  setIsParticular(e.target.checked)
+                  if (!e.target.checked) setUnitId('')
+                }}
+              />
+              <span className="text-sm">
+                <span className="font-medium text-foreground">Es un gasto de una unidad particular</span>
+                <span className="block text-[11px] text-muted-foreground">
+                  En vez de repartirse entre todos, este gasto se le cobra entero a la unidad que
+                  elijas (aparece en &quot;Otros&quot; del boletín de esa unidad).
+                </span>
+              </span>
+            </label>
+            {isParticular ? (
+              <select
+                value={unitId}
+                onChange={(e) => setUnitId(e.target.value)}
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">Elegí la unidad…</option>
+                {units.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.code}
+                    {u.kind ? ` · ${u.kind}` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* Pago desde una cuenta: registra el egreso en la caja para mantener el
+            saldo al día. Opcional — si lo dejás vacío, el gasto queda sin pagar. */}
+        {accounts.length > 0 ? (
+          <div className="space-y-2 md:col-span-2 rounded-lg border border-border/60 bg-muted/30 p-3">
+            <Label htmlFor="cashAccount" className="text-sm font-medium text-foreground">
+              Pagar desde una cuenta <span className="text-muted-foreground font-normal">(opcional)</span>
+            </Label>
+            <p className="text-[11px] text-muted-foreground -mt-1">
+              Si elegís una cuenta, descontamos el gasto de su saldo y queda registrado en la caja.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <select
+                id="cashAccount"
+                value={cashAccountId}
+                onChange={(e) => {
+                  setCashAccountId(e.target.value)
+                  setOverdraftWarning(null)
+                  setAllowOverdraft(false)
+                }}
+                className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">No pagar ahora</option>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                    {a.isActive ? ' · activa' : ''}
+                  </option>
+                ))}
+              </select>
+              {cashAccountId ? (
+                <Input
+                  type="date"
+                  value={paidAt}
+                  onChange={(e) => setPaidAt(e.target.value)}
+                  className="sm:w-44"
+                  aria-label="Fecha de pago"
+                />
+              ) : null}
+            </div>
+            {overdraftWarning ? (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 space-y-2">
+                <p className="text-sm text-amber-900">{overdraftWarning}</p>
+                <label className="flex items-center gap-2 text-sm text-amber-900 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowOverdraft}
+                    onChange={(e) => setAllowOverdraft(e.target.checked)}
+                  />
+                  Permitir saldo negativo y registrar el pago igual
+                </label>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="flex items-center justify-end gap-2">
-        <Button type="submit" disabled={pending}>
-          {pending ? 'Guardando…' : 'Guardar gasto'}
+        <Button type="submit" disabled={pending || (overdraftWarning !== null && !allowOverdraft)}>
+          {pending ? 'Guardando…' : overdraftWarning ? 'Forzar gasto' : 'Guardar gasto'}
         </Button>
       </div>
     </form>

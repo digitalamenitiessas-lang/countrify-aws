@@ -68,7 +68,7 @@ export async function IAdminShell({
               cookiePropertyId={cookiePropertyId}
             />
 
-            {/* Header: solo selector de country + breadcrumb (sin "IAdmin" base ni campanita) */}
+            {/* Header: solo selector de edificio + breadcrumb (sin "IAdmin" base ni campanita) */}
             <header className="mb-4 md:mb-6 flex items-center justify-between gap-3 flex-wrap">
               <nav className="flex items-center gap-1.5 text-xs text-muted-foreground min-w-0 overflow-x-auto">
                 {breadcrumbs && breadcrumbs.length > 0 ? (
@@ -103,12 +103,12 @@ export async function IAdminShell({
 
       <ChatWidget
         suggestions={[
-          '¿Cuántos residentes registrados hay?',
+          '¿Cuántos vecinos registrados hay?',
           '¿Qué expedientes están activos?',
-          '¿Cuál es la ocupación de los countries?',
-          '¿Qué countries tengo a cargo?',
+          '¿Cuál es la ocupación de los edificios?',
+          '¿Qué edificios tengo a cargo?',
         ]}
-        welcomeText="Puedo responder preguntas sobre tus countries, residentes y expedientes."
+        welcomeText="Puedo responder preguntas sobre tus edificios, vecinos y expedientes."
       />
     </>
   )

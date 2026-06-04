@@ -9,10 +9,8 @@ import {
   getReminderAdminFromPostgres,
   setReminderStatusInPostgres,
 } from '@/lib/db/iadmin-writes'
-import {
-  generateRemindersCore,
-  type GenerateRemindersCoreResult,
-} from '@/lib/iadmin/generate-reminders-core'
+import { generateRemindersForAdmin } from '@/lib/iadmin/reminder-generator'
+import { notifyReminderByEmail } from '@/lib/email/notifications/reminders'
 
 const generateSchema = z.object({
   administrationId: z.string().uuid(),
@@ -20,7 +18,10 @@ const generateSchema = z.object({
   daysBeforeDue: z.number().int().min(0).max(30).optional().default(3),
 })
 
-export type GenerateRemindersResult = GenerateRemindersCoreResult
+export type GenerateRemindersResult = {
+  created: number
+  skipped: number
+}
 
 export async function generateReminders(
   input: z.input<typeof generateSchema>,
@@ -31,15 +32,23 @@ export async function generateReminders(
     administrationId: parsed.administrationId,
   })
 
-  const result = await generateRemindersCore({
+  const { created, skipped } = await generateRemindersForAdmin({
     administrationId: parsed.administrationId,
-    propertyId: parsed.propertyId ?? null,
+    managedPropertyId: parsed.propertyId ?? null,
     daysBeforeDue: parsed.daysBeforeDue,
+  })
+
+  await insertIAdminAuditLogInPostgres({
+    administrationId: parsed.administrationId,
     actorProfileId: profile.id,
+    entityType: 'iadmin_reminders',
+    entityId: null,
+    action: 'reminders.generated',
+    metadata: { created, skipped, property_id: parsed.propertyId ?? null, source: 'admin' },
   })
 
   revalidatePath('/iadmin/recordatorios')
-  return result
+  return { created, skipped }
 }
 
 const markSchema = z.object({
@@ -67,6 +76,49 @@ export async function updateReminderStatus(input: z.input<typeof markSchema>) {
   })
 
   revalidatePath('/iadmin/recordatorios')
+}
+
+const sendEmailSchema = z.object({
+  reminderId: z.string().uuid(),
+})
+
+export async function sendReminderByEmail(
+  input: z.input<typeof sendEmailSchema>,
+): Promise<{ sent: number }> {
+  const parsed = sendEmailSchema.parse(input)
+
+  const reminder = await getReminderAdminFromPostgres(parsed.reminderId)
+  if (!reminder) throw new Error('Recordatorio no encontrado')
+
+  const { profile } = await requireIAdmin({
+    capability: 'reminders.send',
+    administrationId: reminder.administration_id,
+  })
+
+  const { sent } = await notifyReminderByEmail({
+    reminderId: parsed.reminderId,
+    actorProfileId: profile.id,
+  })
+
+  if (sent > 0) {
+    await setReminderStatusInPostgres({
+      reminderId: parsed.reminderId,
+      status: 'sent',
+      actorProfileId: profile.id,
+      notes: null,
+    })
+    await insertIAdminAuditLogInPostgres({
+      administrationId: reminder.administration_id,
+      actorProfileId: profile.id,
+      entityType: 'iadmin_reminders',
+      entityId: parsed.reminderId,
+      action: 'reminder.sent_email',
+      metadata: { sent },
+    })
+  }
+
+  revalidatePath('/iadmin/recordatorios')
+  return { sent }
 }
 
 const bulkSchema = z.object({

@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import type { IAdminExpenseLineInRun, IAdminLiquidationRunDetail } from '@/lib/types'
 
 const MONTH_NAMES = [
@@ -108,6 +109,7 @@ function ConsorcistasTable({ run }: { run: IAdminLiquidationRunDetail }) {
           <th>Propietario/Inquilino</th>
           <th className="num">Expensas {run.periodMonth}/{run.periodYear}</th>
           <th className="num">Extraord.</th>
+          <th className="num">Otros</th>
           <th className="num">Saldo ant.</th>
           <th className="num" style={{ background: '#dbeafe' }}>Subtotal</th>
           <th className="num" style={{ background: '#dcfce7' }}>Cobrado</th>
@@ -135,6 +137,7 @@ function ConsorcistasTable({ run }: { run: IAdminLiquidationRunDetail }) {
             </td>
             <td className="num">{formatARS(item.ordinaryAmount)}</td>
             <td className="num">{item.extraordinaryAmount > 0 ? formatARS(item.extraordinaryAmount) : '—'}</td>
+            <td className="num">{item.particularAmount > 0 ? formatARS(item.particularAmount) : '—'}</td>
             <td className="num">{item.previousBalance !== 0 ? formatARS(item.previousBalance) : '—'}</td>
             <td className="num" style={{ background: '#eff6ff', fontWeight: 600 }}>{formatARS(item.subtotal)}</td>
             <td className="num" style={{ background: '#f0fdf4', color: '#166534' }}>
@@ -155,6 +158,7 @@ function ConsorcistasTable({ run }: { run: IAdminLiquidationRunDetail }) {
           <td>{run.items.length} unidades</td>
           <td className="num">{formatARS(run.items.reduce((s, i) => s + i.ordinaryAmount, 0))}</td>
           <td className="num">{formatARS(run.items.reduce((s, i) => s + i.extraordinaryAmount, 0))}</td>
+          <td className="num">{formatARS(run.items.reduce((s, i) => s + i.particularAmount, 0))}</td>
           <td className="num">{formatARS(run.items.reduce((s, i) => s + i.previousBalance, 0))}</td>
           <td className="num" style={{ background: '#dbeafe' }}>{formatARS(run.items.reduce((s, i) => s + i.subtotal, 0))}</td>
           <td className="num" style={{ background: '#dcfce7' }}>{formatARS(run.collectedTotal)}</td>
@@ -234,22 +238,9 @@ function StatementPage({
         </tbody>
       </table>
 
-      {/* Detalle egresos ordinarios */}
+      {/* Detalle egresos ordinarios, agrupados por categoría con comprobante */}
       {ordinaryExpenses.length > 0 ? (
-        <table className="print-table" style={{ fontSize: '10px' }}>
-          <tbody>
-            {ordinaryExpenses.map((e) => (
-              <ExpenseRow key={e.id} line={e} />
-            ))}
-            <tr style={{ fontWeight: 700, background: '#f3f4f6' }}>
-              <td>Total egresos ordinarios</td>
-              <td></td>
-              <td className="num">
-                {formatARS(ordinaryExpenses.reduce((s, e) => s + e.amount, 0))}
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <ExpensesByCategory lines={ordinaryExpenses} totalLabel="Total egresos ordinarios" />
       ) : null}
 
       {/* Detalle egresos extraordinarios */}
@@ -258,20 +249,7 @@ function StatementPage({
           <div className="text-center text-sm font-semibold uppercase mt-2">
             Detalle de expensas extraordinarias
           </div>
-          <table className="print-table" style={{ fontSize: '10px' }}>
-            <tbody>
-              {extraordinaryExpenses.map((e) => (
-                <ExpenseRow key={e.id} line={e} />
-              ))}
-              <tr style={{ fontWeight: 700, background: '#f3f4f6' }}>
-                <td>Total egresos extraordinarios</td>
-                <td></td>
-                <td className="num">
-                  {formatARS(extraordinaryExpenses.reduce((s, e) => s + e.amount, 0))}
-                </td>
-              </tr>
-            </tbody>
-          </table>
+          <ExpensesByCategory lines={extraordinaryExpenses} totalLabel="Total egresos extraordinarios" />
         </>
       ) : null}
 
@@ -302,7 +280,7 @@ function StatementPage({
         <div className="mt-4 border-2 border-black p-3 text-xs space-y-2" style={{ fontSize: '9px' }}>
           {legal.collectionSchedule ? (
             <div>
-              <span className="font-semibold uppercase">Cobranzas en el country:</span>{' '}
+              <span className="font-semibold uppercase">Cobranzas en el edificio:</span>{' '}
               <span style={{ whiteSpace: 'pre-line' }}>{legal.collectionSchedule}</span>
             </div>
           ) : null}
@@ -356,11 +334,70 @@ function ExpenseRow({ line }: { line: IAdminExpenseLineInRun }) {
     line.providerName && !line.description.toLowerCase().includes(line.providerName.toLowerCase())
       ? `${line.providerName} — ${line.description}`
       : line.description
+  const comprobante = [line.documentType, line.documentNumber].filter(Boolean).join(' ')
   return (
     <tr>
-      <td style={{ width: '15%' }}>{line.issuedAt ?? '—'}</td>
+      <td style={{ width: '13%' }}>{line.issuedAt ?? '—'}</td>
       <td>{description}</td>
-      <td className="num" style={{ width: '20%' }}>{formatARS(line.amount)}</td>
+      <td style={{ width: '20%' }}>{comprobante || '—'}</td>
+      <td className="num" style={{ width: '18%' }}>{formatARS(line.amount)}</td>
     </tr>
+  )
+}
+
+// Agrupa egresos por categoría con subtotal por rubro + total, como el PDF de
+// referencia. Mantiene visible el comprobante (tipo/número) de cada línea.
+function ExpensesByCategory({
+  lines,
+  totalLabel,
+}: {
+  lines: IAdminExpenseLineInRun[]
+  totalLabel: string
+}) {
+  const groups = new Map<string, IAdminExpenseLineInRun[]>()
+  for (const line of lines) {
+    const key = line.category?.trim() || 'Sin categoría'
+    const arr = groups.get(key) ?? []
+    arr.push(line)
+    groups.set(key, arr)
+  }
+  const orderedCategories = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b))
+  const total = lines.reduce((s, l) => s + l.amount, 0)
+
+  return (
+    <table className="print-table" style={{ fontSize: '10px' }}>
+      <thead>
+        <tr style={{ background: '#f3f4f6' }}>
+          <th style={{ width: '13%', textAlign: 'left' }}>Fecha</th>
+          <th style={{ textAlign: 'left' }}>Proveedor / detalle</th>
+          <th style={{ width: '20%', textAlign: 'left' }}>Comprobante</th>
+          <th className="num" style={{ width: '18%' }}>Importe</th>
+        </tr>
+      </thead>
+      <tbody>
+        {orderedCategories.map((cat) => {
+          const catLines = groups.get(cat) ?? []
+          const catTotal = catLines.reduce((s, l) => s + l.amount, 0)
+          return (
+            <Fragment key={`cat-${cat}`}>
+              <tr style={{ background: '#eef2ff' }}>
+                <td colSpan={4} style={{ fontWeight: 700, textTransform: 'uppercase' }}>{cat}</td>
+              </tr>
+              {catLines.map((line) => (
+                <ExpenseRow key={line.id} line={line} />
+              ))}
+              <tr style={{ fontStyle: 'italic' }}>
+                <td colSpan={3} style={{ textAlign: 'right' }}>Subtotal {cat}</td>
+                <td className="num">{formatARS(catTotal)}</td>
+              </tr>
+            </Fragment>
+          )
+        })}
+        <tr style={{ fontWeight: 700, background: '#f3f4f6' }}>
+          <td colSpan={3}>{totalLabel}</td>
+          <td className="num">{formatARS(total)}</td>
+        </tr>
+      </tbody>
+    </table>
   )
 }

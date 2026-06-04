@@ -1,16 +1,19 @@
+// Wrapper HTML compartido por todos los mails transaccionales y de
+// notificacion. Branding Countrify (naranja + neutros). Inline-styles porque
+// los clientes de mail no soportan <style> consistentemente.
+
 interface LayoutInput {
-  preheader?: string
+  preheader?: string // texto oculto en la lista de inbox (sneak peek)
   title: string
-  intro?: string
-  bodyHtml: string
+  intro?: string // parrafo opcional debajo del title
+  bodyHtml: string // el contenido especifico ya escapado
   ctaLabel?: string
   ctaUrl?: string
-  footerNote?: string
-  unsubscribeUrl?: string
+  footerNote?: string // copy adicional debajo del CTA
+  unsubscribeUrl?: string // si esta presente, se muestra "Cancelar suscripcion"
 }
 
-const NAVY = '#112250'
-const SAND = '#f4dcb3'
+const ORANGE = '#F04E23'
 const DARK = '#1A1A1A'
 const MUTED = '#666666'
 const BORDER = '#E5E5E5'
@@ -43,9 +46,9 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;c
     <td align="center" style="padding:32px 16px;">
       <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="560" style="max-width:560px;width:100%;background:#FFFFFF;border:1px solid ${BORDER};border-radius:16px;overflow:hidden;">
         <tr>
-          <td style="padding:24px 28px 16px;background:${NAVY};">
-            <a href="${escapeHtml(SITE_URL)}" style="text-decoration:none;color:#FFFFFF;font-weight:700;font-size:20px;letter-spacing:-0.01em;">
-              Countrify
+          <td style="padding:24px 28px 8px;border-bottom:1px solid ${BORDER};">
+            <a href="${escapeHtml(SITE_URL)}" style="text-decoration:none;color:${DARK};font-weight:700;font-size:18px;letter-spacing:-0.01em;">
+              <span style="color:${ORANGE};">●</span> Countrify
             </a>
           </td>
         </tr>
@@ -58,7 +61,7 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;c
             </div>
             ${ctaLabel && ctaUrl ? `
             <div style="margin:28px 0 4px;">
-              <a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:${NAVY};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px;">
+              <a href="${escapeHtml(ctaUrl)}" style="display:inline-block;background:${ORANGE};color:#FFFFFF;text-decoration:none;font-weight:600;font-size:15px;padding:12px 22px;border-radius:10px;">
                 ${escapeHtml(ctaLabel)}
               </a>
             </div>` : ''}
@@ -79,6 +82,7 @@ ${preheader ? `<div style="display:none;max-height:0;overflow:hidden;opacity:0;c
 </body>
 </html>`
 
+  // Plaintext fallback (no escapado porque es texto crudo)
   const text = [
     title,
     intro ? `\n${intro}` : '',

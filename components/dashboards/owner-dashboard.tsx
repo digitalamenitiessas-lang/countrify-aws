@@ -4,6 +4,7 @@ import { Building2, Home, Info, ReceiptText, Users } from 'lucide-react'
 import type { OwnerDashboardData } from '@/lib/types'
 import { Money } from '@/components/admin-backoffice/shared/money'
 import { ChatWidget } from '@/components/ai/chat-widget'
+import { ReportPaymentForm } from '@/components/dashboards/report-payment-form'
 
 function relationshipLabel(value: string) {
   return value.replace('_', ' ')
@@ -26,7 +27,7 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
             </div>
             <h1 className="mt-4 font-serif text-3xl font-bold text-foreground">Hola, {firstName}</h1>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Este espacio concentra la informacion de tus unidades, liquidaciones, pagos e informacion general del country.
+              Este espacio concentra la informacion de tus unidades, liquidaciones, pagos e informacion general del edificio.
             </p>
           </div>
           <div className="rounded-2xl border border-border/50 bg-background px-5 py-4 text-right">
@@ -41,7 +42,7 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
       <section className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <StatCard icon={Building2} label="Unidades vinculadas" value={data.units.length.toString()} />
         <StatCard icon={ReceiptText} label="Ultimo pago" value={lastPayment ? new Date(lastPayment.paidAt).toLocaleDateString('es-AR') : 'Sin pagos'} />
-        <StatCard icon={Info} label="Avisos del country" value={data.buildingInformation.length.toString()} />
+        <StatCard icon={Info} label="Avisos del edificio" value={data.buildingInformation.length.toString()} />
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_0.7fr] gap-6">
@@ -61,7 +62,7 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <div className="text-xs uppercase tracking-wide text-primary">
-                        {unit.membership.buildingName ?? 'Country'}
+                        {unit.membership.buildingName ?? 'Edificio'}
                       </div>
                       <h3 className="mt-1 text-lg font-semibold text-foreground">
                         Unidad {unit.membership.unitCode ?? unit.membership.unitId.slice(0, 8)}
@@ -105,6 +106,13 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
                       </div>
                     </div>
                   ) : null}
+
+                  <ReportPaymentForm
+                    unitId={unit.membership.unitId}
+                    unitCode={unit.membership.unitCode ?? unit.membership.unitId.slice(0, 8)}
+                    liquidationItemId={unit.latestLiquidation?.id ?? null}
+                    suggestedAmount={unit.latestLiquidation?.balanceRemaining ?? null}
+                  />
                 </article>
               ))}
             </div>
@@ -115,7 +123,7 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
           <section className="glass-card rounded-3xl p-5">
             <div className="flex items-center gap-2 mb-4">
               <Info className="w-4 h-4 text-primary" />
-              <h2 className="font-serif text-lg font-semibold text-foreground">Informacion del country</h2>
+              <h2 className="font-serif text-lg font-semibold text-foreground">Informacion del edificio</h2>
             </div>
             {data.buildingInformation.length === 0 ? (
               <p className="text-sm text-muted-foreground">
@@ -140,7 +148,7 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
               <h2 className="font-serif text-lg font-semibold text-foreground">Asambleas y voto</h2>
             </div>
             <p className="text-sm leading-6 text-muted-foreground">
-              El modelo ya distingue al propietario de los residentes. En la proxima etapa, este panel va a centralizar asambleas y votaciones por unidad.
+              El modelo ya distingue al propietario de los vecinos. En la proxima etapa, este panel va a centralizar asambleas y votaciones por unidad.
             </p>
           </section>
         </aside>
@@ -149,12 +157,12 @@ export function OwnerDashboard({ data }: { data: OwnerDashboardData }) {
 
       <ChatWidget
         suggestions={[
-          '¿Cuánto debo de expensas?',
+          '¿Cuánto debo de expensasí',
           '¿Cuál fue mi último pago?',
-          '¿Hay avisos del country?',
+          '¿Hay avisos del edificio?',
           '¿Cuáles son mis unidades?',
         ]}
-        welcomeText="Puedo responder preguntas sobre tus expensas, pagos y avisos de tu country."
+        welcomeText="Puedo responder preguntas sobre tus expensas, pagos y avisos de tu edificio."
       />
     </>
   )

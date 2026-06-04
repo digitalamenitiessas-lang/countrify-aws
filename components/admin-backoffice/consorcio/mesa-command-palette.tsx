@@ -188,7 +188,7 @@ export function MesaCommandPalette({
       },
       {
         id: 'emit',
-        label: 'Emitir y avisar a los residentes',
+        label: 'Emitir y avisar a los vecinos',
         icon: Send,
         shortcut: 'E',
         disabled: !canEmit || (!grid.readyToEmit && state.runStatus === null),

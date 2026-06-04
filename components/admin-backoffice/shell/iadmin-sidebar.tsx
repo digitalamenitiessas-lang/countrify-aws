@@ -10,8 +10,8 @@ import {
   FileSpreadsheet,
   Home,
   Megaphone,
+  MessageSquareText,
   Receipt,
-  Scale,
   Table,
   Wallet,
 } from 'lucide-react'
@@ -34,13 +34,15 @@ type Props = {
   cookiePropertyId: string | null
 }
 
-// Nav global simplificado: solo lo cross-cartera. Liquidaciones y Recordatorios
-// viven dentro de Mesa del mes de cada country (sus URLs siguen vivas por compat).
+// Nav global simplificado: solo lo que tiene sentido cross-cartera.
+// Cartera se sacó porque Inicio ya muestra el resumen consolidado.
+// Liquidaciones y Recordatorios viven dentro de Mesa del mes de cada edificio.
 const GLOBAL_ITEMS: ReadonlyArray<NavItem> = [
   { href: '/iadmin', label: 'Inicio', icon: Home, need: 'portfolio.view', exact: true },
   { href: '/iadmin/gastos', label: 'Gastos', icon: Receipt, need: 'expenses.view', matchPrefix: '/iadmin/gastos' },
   { href: '/iadmin/cobranzas', label: 'Cobranzas', icon: Wallet, need: 'collections.view', matchPrefix: '/iadmin/cobranzas' },
   { href: '/iadmin/comunicaciones', label: 'Comunicados', icon: Megaphone, need: 'communications.send', matchPrefix: '/iadmin/comunicaciones' },
+  { href: '/iadmin/expedientes', label: 'Reclamos', icon: MessageSquareText, need: 'consorcio.view', matchPrefix: '/iadmin/expedientes' },
 ]
 
 type ConsorcioItem = {
@@ -76,13 +78,6 @@ const CONSORCIO_ITEMS: ReadonlyArray<ConsorcioItem> = [
     matchFor: (id) => `/iadmin/consorcios/${id}/cuentas`,
   },
   {
-    key: 'conciliacion',
-    label: 'Conciliación',
-    icon: Scale,
-    hrefFor: (id) => `/iadmin/consorcios/${id}/conciliacion`,
-    matchFor: (id) => `/iadmin/consorcios/${id}/conciliacion`,
-  },
-  {
     key: 'importar',
     label: 'Importar',
     icon: FileSpreadsheet,
@@ -113,7 +108,8 @@ export function IAdminSidebar({
   const pathname = usePathname() ?? ''
   const allowed = useMemo(() => new Set(allowedCapabilities), [allowedCapabilities])
 
-  // Active property: URL > cookie. "all" → ningún edificio activo.
+  // Active property: URL > cookie > (si hay un solo edificio, ese) > null.
+  // "all" en cookie → ningún edificio activo (vista consolidada).
   const urlMatch = pathname.match(/^\/iadmin\/consorcios\/([^/]+)/)
   const urlPropertyId = urlMatch ? urlMatch[1] : null
   const isAllCookie = cookiePropertyId === 'all'
@@ -124,9 +120,9 @@ export function IAdminSidebar({
     !isAllCookie && cookiePropertyId
       ? properties.find((p) => p.id === cookiePropertyId)
       : null
-  // Con un solo country, lo tratamos como activo por defecto para mostrar su detalle.
-  const soleProperty = properties.length === 1 ? properties[0] : null
-  const activeProperty = activeFromUrl ?? activeFromCookie ?? soleProperty
+  // Si el admin solo tiene un edificio, ese es el active por default.
+  const singleProperty = properties.length === 1 ? properties[0] : null
+  const activeProperty = activeFromUrl ?? activeFromCookie ?? singleProperty ?? null
 
   const visibleGlobalItems = GLOBAL_ITEMS.filter((item) => allowed.has(item.need))
   const showConsorcioBlock = activeProperty && allowed.has('consorcio.view')

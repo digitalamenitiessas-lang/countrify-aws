@@ -93,7 +93,7 @@ export async function runAIExtraction(input: CallInput): Promise<AIExtractionRes
       'Content-Type': 'application/json',
       Authorization: `Bearer ${apiKey}`,
       'HTTP-Referer': 'https://countrify.com.ar',
-      'X-Title': 'Countrify IAdmin',
+      'X-Title': 'CITIFY IAdmin',
     },
     body: JSON.stringify({
       model,

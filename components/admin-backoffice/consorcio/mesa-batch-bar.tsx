@@ -145,7 +145,7 @@ export function MesaBatchBar({ count, onClear, onApplyDelta, onClearValues, onCo
               }
             }}
             placeholder="+10%  ·  *1.05  ·  =50000"
-            className="w-44 rounded-md border border-border/50 bg-background px-2 py-1 text-xs tabular-nums focus:outline-none focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(17, 34, 80,0.08)] transition-shadow"
+            className="w-44 rounded-md border border-border/50 bg-background px-2 py-1 text-xs tabular-nums focus:outline-none focus:border-primary/40 focus:shadow-[0_0_0_3px_rgba(240, 78, 35,0.08)] transition-shadow"
           />
           <button
             type="button"

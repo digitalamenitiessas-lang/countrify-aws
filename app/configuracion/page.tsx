@@ -10,7 +10,6 @@ import type { UserRole } from '@/lib/types'
 const VISIBLE_KEYS_BY_ROLE: Record<UserRole, Array<keyof EmailPreferences>> = {
   super_admin: ['complaints', 'liquidations', 'announcements', 'promotions'],
   vecino: ['complaints', 'liquidations', 'announcements', 'promotions'],
-  propietario: ['complaints', 'liquidations', 'announcements', 'promotions'],
   consorcio_admin: ['complaints', 'liquidations'],
   negocio_admin: [],
 }

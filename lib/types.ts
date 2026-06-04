@@ -1,4 +1,4 @@
-export type UserRole = 'super_admin' | 'negocio_admin' | 'consorcio_admin' | 'propietario' | 'vecino'
+export type UserRole = 'super_admin' | 'negocio_admin' | 'consorcio_admin' | 'vecino'
 
 export interface Building {
   id: string
@@ -371,6 +371,10 @@ export interface SuperAdminBuildingDetail extends Building {
   occupancyRate: number
   administration: IAdminAdministration | null
   managedProperty: IAdminManagedProperty | null
+  adminLoadedUnitsCount: number
+  adminLoadedBuildingInfoCount: number
+  adminLoadedExpensesCount: number
+  adminLastActivityAt: string | null
 }
 
 export interface PromotionRedemptionByBuilding {
@@ -595,6 +599,7 @@ export type IAdminCapability =
   | 'cash_accounts.manage'
   | 'collections.register'
   | 'collections.void'
+  | 'collections.validate_claims'
   | 'liquidations.share'
   | 'expenses.recurring.manage'
   | 'reminders.generate'
@@ -630,6 +635,20 @@ export interface IAdminLegalInfo {
   amenities?: IAdminLegalInfoAmenity[]
   collectionSchedule?: string
   footerNotes?: string
+}
+
+export interface IAdminOperationalDueDateRule {
+  label: string
+  day: number
+  surchargePct: number
+}
+
+export interface IAdminOperationalSettings {
+  dueDateRules?: IAdminOperationalDueDateRule[]
+  paymentAllocationMode?: 'fifo_oldest_first'
+  closePeriodPolicy?: 'issued_required'
+  allowManualAdjustments?: boolean
+  legalDebtNotice?: string
 }
 
 export interface IAdminAdministration {
@@ -672,6 +691,7 @@ export interface IAdminManagedProperty {
   isActive: boolean
   totalUnits: number
   legalInfo: IAdminLegalInfo
+  operationalSettings: IAdminOperationalSettings
   createdAt: string
 }
 
@@ -713,6 +733,10 @@ export interface IAdminPortfolioOverview {
     totalCollectedMonth: number
     pendingExpenses: number
   }
+  /** Período sobre el que se calcularon las métricas mensuales. */
+  selectedPeriod: { year: number; month: number }
+  /** Períodos contables con datos en la administración (orden desc). */
+  availablePeriods: Array<{ year: number; month: number }>
 }
 
 export interface IAdminUnit {
@@ -749,6 +773,7 @@ export interface IAdminAccountingPeriod {
   periodMonth: number
   status: IAdminPeriodStatus
   closedAt: string | null
+  closePolicy: 'issued_required'
 }
 
 export interface IAdminExpenseSummary {
@@ -767,6 +792,8 @@ export interface IAdminExpenseSummary {
   hasDocuments: boolean
   pendingExtraction: boolean
   createdAt: string
+  periodYear: number | null
+  periodMonth: number | null
 }
 
 export interface IAdminExpenseDocument {
@@ -790,6 +817,15 @@ export interface IAdminAIExtraction {
   validatedBy: string | null
   validatedAt: string | null
   validationNotes: string | null
+}
+
+export interface IAdminLinkableProfile {
+  id: string
+  email: string
+  fullName: string
+  role: 'vecino'
+  phone: string | null
+  activeMembershipsCount: number
 }
 
 export interface IAdminConsorcioDetail {
@@ -852,17 +888,6 @@ export interface IAdminReminder {
 export interface IAdminUnitWithHolders extends IAdminUnit {
   holders: IAdminUnitHolder[]
   memberships: UnitProfileMembership[]
-}
-
-export type IAdminLinkableProfile = {
-  id: string
-  email: string
-  fullName: string
-  role: 'vecino' | 'propietario'
-  phone: string | null
-  activeMembershipsCount: number
-  sameBuilding: boolean
-  currentBuildingName: string | null
 }
 
 export type IAdminCashAccountKind = 'bank' | 'cash' | 'reserve' | 'other'
@@ -928,6 +953,29 @@ export interface IAdminAccountPayable {
   oldestDate: string | null
 }
 
+/** Un gasto puntual por pagar (sin movimiento de pago todavía). */
+export interface IAdminPayableExpense {
+  id: string
+  providerId: string | null
+  providerName: string
+  description: string
+  category: string | null
+  status: string
+  amount: number
+  issuedAt: string | null
+  documentType: string | null
+  documentNumber: string | null
+}
+
+/** Deuda a un proveedor agrupando sus gastos impagos. */
+export interface IAdminPayableProviderGroup {
+  providerId: string | null
+  providerName: string
+  totalAmount: number
+  oldestDate: string | null
+  expenses: IAdminPayableExpense[]
+}
+
 export interface IAdminPeriodCollections {
   liquidatedOrdinary: number
   liquidatedExtraordinary: number
@@ -946,6 +994,16 @@ export interface IAdminOverdueBucket {
   periodsOld: number          // cantidad de meses vencidos
   unitsCount: number
   totalAmount: number
+}
+
+export interface IAdminMonthlyTrendPoint {
+  year: number
+  month: number
+  periodLabel: string          // ej. "Ene 26"
+  liquidated: number           // ordinarias + extraordinarias liquidadas del mes
+  collected: number            // cobrado vivo de ese run
+  collectionRatePct: number | null
+  isCurrent: boolean
 }
 
 export interface IAdminMonthlyGridRow {
@@ -985,6 +1043,8 @@ export interface IAdminMesaUnitLine {
   ordinary: number
   extraordinary: number
   previousBalance: number
+  /** Recargo por mora abierto en el ledger para esta unidad/run. 0 si no hay. */
+  lateFee: number
   subtotal: number
   collected: number
   balance: number
@@ -1003,10 +1063,17 @@ export interface IAdminUnitAccountMonth {
   ordinary: number
   extraordinary: number
   previousBalance: number
+  lateFee: number         // recargo por mora acumulado del mes (separado de previousBalance para que se distinga en la UI)
   subtotal: number
   collected: number
   balance: number         // saldo pendiente
   isCurrent: boolean
+  // true si la deuda de este mes se arrastró a una liquidación posterior (sus
+  // cargos se consolidaron en el "saldo anterior" del mes destino). El mes sí se
+  // facturó, pero su saldo vivo dejó de estar acá: balance=0 y la deuda figura
+  // en `rolledForwardToLabel`. Permite distinguirlo de un mes "sin facturar".
+  rolledForward: boolean
+  rolledForwardToLabel: string | null  // "JUN 26", si se pudo resolver el destino
 }
 
 export interface IAdminUnitPaymentReceipt {
@@ -1050,6 +1117,11 @@ export interface IAdminMesaState {
   runId: string | null
   runStatus: IAdminLiquidationStatus | null
   hasRun: boolean
+  /** Suma ord+ext+prev guardada en el run actual. null si no hay run. */
+  runSnapshotTotal: number | null
+  /** Pagos vivos asociados al run actual (para gate de re-emisión). */
+  runLivePaymentsCount: number
+  runLivePaymentsTotal: number
   ordinaryTotal: number
   extraordinaryTotal: number
   previousBalanceTotal: number
@@ -1072,7 +1144,10 @@ export interface IAdminMonthlyGrid {
     year: number
     month: number
     label: string       // "NOV 25"
+    /** True si coincide con el mes calendario real (no con el seleccionado). */
     isCurrent: boolean
+    /** True si es el período sobre el que está pivoteando la Mesa (último de la ventana). */
+    isPivot: boolean
     total: number
     periodStatus: IAdminPeriodStatus | null
     runId: string | null
@@ -1083,7 +1158,13 @@ export interface IAdminMonthlyGrid {
   totalByMonth: Record<string, number>
   activeUnitsCount: number
   totalAlicuota: number            // suma de alicuotas activas
-  readyToEmit: boolean              // hay al menos 1 gasto en el mes actual
+  readyToEmit: boolean              // hay al menos 1 gasto en el mes pivote
+  /** Período que está activo (último mes de la ventana). */
+  selectedPeriod: { year: number; month: number }
+  /** Períodos contables del consorcio + mes actual + mes siguiente, para el picker. */
+  availablePeriods: Array<{ year: number; month: number }>
+  /** True si el período seleccionado es posterior al mes calendario actual. */
+  isFuturePeriod: boolean
 }
 
 export type IAdminClosingStepId =
@@ -1124,12 +1205,13 @@ export interface IAdminConsorcioDashboard {
   property: IAdminManagedProperty
   balances: IAdminDashboardCashSnapshot[]
   totalBalance: number
-  accountsPayable: IAdminAccountPayable[]
+  accountsPayable: IAdminPayableProviderGroup[]   // proveedores a pagar (gastos impagos)
   totalPayable: number
   periodCollections: IAdminPeriodCollections
   overdueBuckets: IAdminOverdueBucket[]
   totalOverdueAmount: number
   totalOverdueUnits: number
+  monthlyTrend: IAdminMonthlyTrendPoint[]   // últimos meses: liquidado vs cobrado
   pendingExpenses: number       // gastos pending_review + needs_doc
   pendingDocuments: number      // extracciones pending/suggested
   activeUnitsCount: number
@@ -1147,6 +1229,61 @@ export interface IAdminLiquidationRunSummary {
   totalUnits: number
   generatedAt: string
   closedAt: string | null
+}
+
+export type IAdminLedgerEntryType =
+  | 'expensa_ordinaria'
+  | 'expensa_extraordinaria'
+  | 'saldo_anterior_migrado'
+  | 'recargo_mora'
+  | 'pago'
+  | 'ajuste_manual'
+  | 'anulacion'
+
+export type IAdminLedgerEntryStatus = 'open' | 'partially_paid' | 'paid' | 'void'
+
+export interface IAdminLedgerEntry {
+  id: string
+  administrationId: string
+  managedPropertyId: string
+  unitId: string
+  accountingPeriodId: string | null
+  liquidationRunId: string | null
+  liquidationItemId: string | null
+  paymentId: string | null
+  entryType: IAdminLedgerEntryType
+  originType: string | null
+  originId: string | null
+  description: string | null
+  dueDate: string | null
+  amount: number
+  balanceOpen: number
+  status: IAdminLedgerEntryStatus
+  metadata: Record<string, unknown>
+  createdBy: string | null
+  createdAt: string
+  voidedBy: string | null
+  voidedAt: string | null
+  voidReason: string | null
+}
+
+export interface IAdminOpenBalance {
+  unitId: string
+  entryId: string
+  entryType: IAdminLedgerEntryType
+  dueDate: string | null
+  amount: number
+  balanceOpen: number
+  liquidationRunId: string | null
+  liquidationItemId: string | null
+}
+
+export interface IAdminUnitAccountStatement {
+  ledger: IAdminLedgerEntry[]
+}
+
+export interface IAdminLiquidationRunSummary {
+  operationalSnapshot: IAdminOperationalSettings | null
 }
 
 export interface IAdminDueDate {
@@ -1197,13 +1334,92 @@ export interface IAdminLiquidationItem {
   prorataCoefficient: number
   ordinaryAmount: number
   extraordinaryAmount: number
+  particularAmount: number             // cargos particulares de esta unidad (no prorrateado)
   previousBalance: number
   amount: number                       // compat: ordinary_amount (legacy)
-  subtotal: number                     // ordinary + extraordinary + previousBalance
+  subtotal: number                     // ordinary + extraordinary + particular + previousBalance
   dueAmounts: IAdminLiquidationItemDueAmount[]
   collectedAmount: number              // total cobrado (sin void)
   balanceRemaining: number             // subtotal - collectedAmount (clamp >= 0)
   payments: IAdminPayment[]
+}
+
+// Cobranzas — payload del modulo /iadmin/cobranzas
+export interface IAdminCollectionsKpis {
+  collectedThisMonth: number
+  paymentsThisMonth: number
+  openBalanceTotal: number
+  overdueOver30d: number
+}
+
+export interface IAdminCollectionPayment {
+  id: string
+  administrationId: string
+  managedPropertyId: string
+  propertyDisplayName: string | null
+  buildingName: string | null
+  liquidationRunId: string | null
+  liquidationItemId: string | null
+  periodYear: number | null
+  periodMonth: number | null
+  unitId: string | null
+  unitCode: string | null
+  holderName: string | null
+  cashAccountId: string | null
+  cashAccountName: string | null
+  bankMovementId: string | null
+  amount: number
+  surchargeAmount: number
+  paidAt: string
+  method: string | null
+  reference: string | null
+  receiptNumber: string | null
+  dueLabel: string | null
+  notes: string | null
+  isVoid: boolean
+  voidedAt: string | null
+  voidedByName: string | null
+  voidReason: string | null
+  createdAt: string
+  createdByName: string | null
+}
+
+export interface IAdminOpenLiquidationItem {
+  itemId: string
+  unitId: string
+  unitCode: string
+  unitKind: string | null
+  holderName: string | null
+  managedPropertyId: string
+  propertyDisplayName: string | null
+  buildingName: string | null
+  liquidationRunId: string
+  runStatus: string
+  periodYear: number
+  periodMonth: number
+  ordinaryAmount: number
+  extraordinaryAmount: number
+  previousBalance: number
+  subtotal: number
+  paid: number
+  balanceRemaining: number
+  dueDates: IAdminDueDate[]
+}
+
+export interface IAdminCollectionsFilters {
+  periodYear: number | null
+  periodMonth: number | null
+  unitId: string | null
+  status: 'live' | 'voided' | 'all'
+  method: string | null
+}
+
+export interface IAdminCollectionsData {
+  kpis: IAdminCollectionsKpis
+  payments: IAdminCollectionPayment[]
+  eligibleItems: IAdminOpenLiquidationItem[]
+  cashAccounts: IAdminCashAccountWithBalance[]
+  filters: IAdminCollectionsFilters
 }
 
 export interface IAdminExpenseLineInRun {
@@ -1214,6 +1430,9 @@ export interface IAdminExpenseLineInRun {
   category: string | null
   amount: number
   kind: IAdminExpenseKind
+  // Comprobante (tipo + número) para el detalle de egresos de la caja.
+  documentType: string | null
+  documentNumber: string | null
 }
 
 export interface IAdminCashStatement {
@@ -1260,4 +1479,7 @@ export interface IAdminLiquidationRunDetail {
   collectedTotal: number
   balanceTotal: number
   cashAccounts: IAdminCashAccountWithBalance[]
+  // true si esta liquidación ya fue superada por una posterior (sus saldos se
+  // arrastraron). No es reabrible hasta reabrir la más reciente (orden LIFO).
+  isSuperseded: boolean
 }

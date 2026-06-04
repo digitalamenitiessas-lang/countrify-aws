@@ -28,7 +28,7 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
   // 0 propiedades → no mostramos nada. 1 propiedad → solo el chip estático.
   if (properties.length === 0) return null
 
-  // Active: URL > cookie > "all" implícito.
+  // Active: URL > cookie > (si hay un solo edificio, ese) > null
   const urlMatch = pathname.match(/^\/iadmin\/consorcios\/([^/]+)/)
   const urlPropertyId = urlMatch ? urlMatch[1] : null
   const activeFromUrl = urlPropertyId
@@ -39,11 +39,12 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
     !isAllCookie && cookiePropertyId
       ? properties.find((p) => p.id === cookiePropertyId)
       : null
-  // Con un solo country, lo tratamos como activo por defecto (no hay nada que elegir).
-  const soleProperty = properties.length === 1 ? properties[0] : null
-  const active = activeFromUrl ?? activeFromCookie ?? soleProperty
+  // Si el admin solo gestiona un único edificio, ese es el active por default
+  // (no tiene sentido mostrar "Todos los edificios" cuando hay uno solo).
+  const singleProperty = properties.length === 1 ? properties[0] : null
+  const active = activeFromUrl ?? activeFromCookie ?? singleProperty ?? null
 
-  // Si solo hay un consorcio y nada activo, no hace falta dropdown.
+  // Dropdown solo si hay más de un edificio.
   const interactive = properties.length > 1
 
   useEffect(() => {
@@ -97,7 +98,7 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
       })
     : properties
 
-  const label = active ? active.displayName ?? active.buildingName : 'Todos los countries'
+  const label = active ? active.displayName ?? active.buildingName : 'Todos los edificios'
   const Icon = active ? Building2 : Globe
 
   return (
@@ -118,7 +119,7 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
         <Icon className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-primary' : 'text-muted-foreground'}`} />
         <div className="min-w-0 flex-1 text-left">
           <div className="text-[10px] uppercase tracking-wider text-muted-foreground leading-none">
-            {active ? 'Country' : 'Vista'}
+            {active ? 'Edificio' : 'Vista'}
           </div>
           <div className="text-sm font-medium text-foreground truncate leading-tight mt-0.5">
             {label}
@@ -140,7 +141,7 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Buscar country…"
+                placeholder="Buscar edificio…"
                 className="w-full rounded-md border border-border/50 bg-background pl-8 pr-2 py-1.5 text-sm focus:outline-none focus:border-primary/50"
                 autoFocus
               />
@@ -157,14 +158,14 @@ export function HeaderPropertyPicker({ properties, cookiePropertyId }: Props) {
               >
                 <Globe className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium text-foreground">Todos los countries</div>
+                  <div className="font-medium text-foreground">Todos los edificios</div>
                   <div className="text-xs text-muted-foreground">Vista consolidada</div>
                 </div>
                 {!active ? <Check className="w-3.5 h-3.5 text-primary shrink-0" /> : null}
               </button>
             </li>
             <li className="px-2 py-1 mt-1 text-[10px] uppercase tracking-wider text-muted-foreground/70">
-              Countries
+              Edificios
             </li>
             {filtered.length === 0 ? (
               <li className="px-3 py-4 text-center text-xs text-muted-foreground">Sin resultados</li>

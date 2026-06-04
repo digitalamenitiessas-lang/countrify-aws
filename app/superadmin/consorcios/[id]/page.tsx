@@ -11,7 +11,6 @@ export default async function ConsorcioDetailPage({ params }: { params: Promise<
   const usersHere = data.users.filter((u) => u.buildingId === id)
   const metrics: Array<{ label: string; value: number | string }> = [
     { label: 'Vecinos', value: usersHere.filter((u) => u.role === 'vecino').length },
-    { label: 'Propietarios', value: usersHere.filter((u) => u.role === 'propietario').length },
     { label: 'Residentes registrados', value: building.registeredNeighbors },
     { label: 'Administradores', value: building.admins.length },
     { label: 'Capacidad', value: building.totalUnits },

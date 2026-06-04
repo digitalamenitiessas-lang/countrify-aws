@@ -737,7 +737,7 @@ export function computeDashboardStats(data: SuperAdminDashboardData): DashboardS
     return acc
   }, {})
 
-  const usersByRole = (['vecino', 'propietario', 'consorcio_admin', 'negocio_admin'] as const).map((role) => ({
+  const usersByRole = (['vecino', 'consorcio_admin', 'negocio_admin'] as const).map((role) => ({
     role,
     label: ROLE_LABELS[role],
     count: roleCounts[role] ?? 0,

@@ -77,7 +77,7 @@ const createPlatformUserSchema = z.object({
 type ImportRelationship = 'propietario' | 'vecino_principal' | 'vecino_adicional'
 
 function relationshipRole(relationship: ImportRelationship): UserRole {
-  return relationship === 'propietario' ? 'propietario' : 'vecino'
+  return 'vecino'
 }
 
 function parseBoolean(value: string | undefined) {

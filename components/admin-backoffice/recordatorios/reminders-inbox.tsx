@@ -1,12 +1,12 @@
 'use client'
 
 import { useState, useTransition } from 'react'
-import { Bell, Check, Clock, Copy, Loader2, MailX, RefreshCw, Share2, TrendingDown, X } from 'lucide-react'
+import { Bell, Check, Clock, Copy, Loader2, Mail, MailX, RefreshCw, Share2, TrendingDown, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Money } from '@/components/admin-backoffice/shared/money'
 import type { IAdminManagedProperty, IAdminReminder, IAdminReminderKind, IAdminReminderStatus } from '@/lib/types'
-import { bulkUpdateReminders, generateReminders, updateReminderStatus } from '@/app/iadmin/recordatorios/actions'
+import { bulkUpdateReminders, generateReminders, sendReminderByEmail, updateReminderStatus } from '@/app/iadmin/recordatorios/actions'
 
 type Props = {
   administrationId: string
@@ -64,6 +64,26 @@ export function RemindersInbox({ administrationId, reminders, properties }: Prop
         toast.error(error instanceof Error ? error.message : 'Error')
       } finally {
         setGenerating(false)
+      }
+    })
+  }
+
+  function handleSendEmail(reminderId: string) {
+    startTransition(async () => {
+      try {
+        const r = await sendReminderByEmail({ reminderId })
+        if (r.sent > 0) {
+          toast.success(`Mail enviado a ${r.sent} ${r.sent === 1 ? 'destinatario' : 'destinatarios'}`)
+        } else {
+          toast.warning('No se envió: la unidad no tiene propietario/vecino con mail, o el destinatario tiene los avisos desactivados')
+        }
+        setSelected((prev) => {
+          const next = new Set(prev)
+          next.delete(reminderId)
+          return next
+        })
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : 'Error')
       }
     })
   }
@@ -346,6 +366,16 @@ export function RemindersInbox({ administrationId, reminders, properties }: Prop
                       <Share2 className="w-3.5 h-3.5" />
                       WhatsApp
                     </a>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pending}
+                      onClick={() => handleSendEmail(r.id)}
+                      title="Enviar por mail al propietario/vecino"
+                    >
+                      <Mail className="w-3.5 h-3.5 mr-1" />
+                      Mail
+                    </Button>
                     <Button size="sm" variant="ghost" disabled={pending} onClick={() => handleAction(r.id, 'sent')}>
                       <Check className="w-3.5 h-3.5" />
                     </Button>

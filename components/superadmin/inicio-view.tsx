@@ -24,7 +24,7 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
         id: building.id,
         name: building.name,
         vecinos: usersHere.filter((u) => u.role === 'vecino').length,
-        propietarios: usersHere.filter((u) => u.role === 'propietario').length,
+        propietarios: 0,
         residentes: building.registeredNeighbors,
         admins: building.admins.length,
         occupancyRate: building.occupancyRate,
@@ -47,7 +47,7 @@ export function InicioView({ data }: { data: SuperAdminDashboardData }) {
         <StatCard
           label="Usuarios"
           value={data.users.length}
-          sub={`${data.users.filter((u) => u.role === 'vecino').length} residentes · ${data.users.filter((u) => u.role === 'propietario').length} propietarios`}
+          sub={`${data.users.filter((u) => u.role === 'vecino').length} residentes`}
           icon={Users}
           tone="navy"
         />

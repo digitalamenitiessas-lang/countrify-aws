@@ -13,6 +13,7 @@ import { publishAnnouncement } from '@/app/iadmin/comunicaciones/actions'
 
 type Props = {
   buildings: Array<{ id: string; name: string }>
+  // Si el composer AI generó texto, puede pasarse para pre-llenar.
   initialBody?: string
   initialTitle?: string
 }
@@ -29,7 +30,7 @@ export function PublishAnnouncementForm({ buildings, initialBody, initialTitle }
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!buildingId) {
-      toast.error('Seleccioná un consorcio')
+      toast.error('Seleccioná un edificio')
       return
     }
     if (title.trim().length < 3) {
@@ -49,7 +50,7 @@ export function PublishAnnouncementForm({ buildings, initialBody, initialTitle }
           pinned,
           expiresAt: expiresAt || null,
         })
-        toast.success('Comunicado publicado.')
+        toast.success('Comunicado publicado y enviado por mail a los vecinos opt-in.')
         setTitle('')
         setBody('')
         setPinned(false)
@@ -64,7 +65,7 @@ export function PublishAnnouncementForm({ buildings, initialBody, initialTitle }
   if (buildings.length === 0) {
     return (
       <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-        Tu cuenta no tiene consorcios asignados. Pedí al super admin que te vincule a uno.
+        Tu cuenta no tiene buildings asignados. Pedí al super admin que te vincule a uno.
       </div>
     )
   }
@@ -73,7 +74,7 @@ export function PublishAnnouncementForm({ buildings, initialBody, initialTitle }
     <form onSubmit={handleSubmit} className="space-y-4">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="space-y-1.5">
-          <Label>Consorcio *</Label>
+          <Label>Edificio *</Label>
           <select
             className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
             value={buildingId}
@@ -115,7 +116,7 @@ export function PublishAnnouncementForm({ buildings, initialBody, initialTitle }
           rows={8}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder="Escribí el comunicado o copiá la versión generada por la IA abajo."
+          placeholder="Escribí el comunicado o copiá la versión generada por la IA arriba."
           maxLength={8000}
           required
         />
@@ -135,7 +136,7 @@ export function PublishAnnouncementForm({ buildings, initialBody, initialTitle }
           ) : (
             <Send className="h-4 w-4" />
           )}
-          Publicar
+          Publicar y enviar
         </Button>
       </div>
     </form>

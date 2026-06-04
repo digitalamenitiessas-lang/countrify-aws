@@ -7,8 +7,8 @@ export default async function ConsorcioPage() {
     redirect('/login')
   }
 
-  if (profile.role === 'propietario') {
-    redirect('/propietario')
+  if (profile.role === 'vecino') {
+    redirect('/vecino')
   }
 
   if (profile.role === 'consorcio_admin' || profile.role === 'super_admin') {
