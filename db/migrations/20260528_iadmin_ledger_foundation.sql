@@ -5,7 +5,7 @@
 
 do $$
 begin
-  if not exists (select 1 from pg_type where typname = 'iadmin_ledger_entry_type') then
+  if not exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typname = 'iadmin_ledger_entry_type' and n.nspname = 'countrify') then
     create type countrify.iadmin_ledger_entry_type as enum (
       'expensa_ordinaria',
       'expensa_extraordinaria',
@@ -17,7 +17,7 @@ begin
     );
   end if;
 
-  if not exists (select 1 from pg_type where typname = 'iadmin_ledger_entry_status') then
+  if not exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typname = 'iadmin_ledger_entry_status' and n.nspname = 'countrify') then
     create type countrify.iadmin_ledger_entry_status as enum (
       'open',
       'partially_paid',

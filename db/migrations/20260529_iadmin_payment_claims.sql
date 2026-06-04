@@ -4,7 +4,7 @@
 
 do $$
 begin
-  if not exists (select 1 from pg_type where typname = 'iadmin_payment_claim_status') then
+  if not exists (select 1 from pg_type t join pg_namespace n on n.oid = t.typnamespace where t.typname = 'iadmin_payment_claim_status' and n.nspname = 'countrify') then
     create type countrify.iadmin_payment_claim_status as enum (
       'pending',
       'validated',
