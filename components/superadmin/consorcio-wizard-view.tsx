@@ -2,7 +2,7 @@
 
 import { useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
-import { MapPin } from 'lucide-react'
+import { ChevronDown, MapPin } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,24 +18,16 @@ import {
 } from '@/components/superadmin/shared'
 import type { IAdminPropertyKind, SuperAdminConsorcioAdminOption } from '@/lib/types'
 
-type ConsorcioWizardStepId = 'building' | 'administration' | 'property' | 'admin' | 'summary'
+type ConsorcioWizardStepId = 'consorcio' | 'admin' | 'summary'
 
 const CONSORCIO_WIZARD_STEPS: Array<{
   id: ConsorcioWizardStepId
   label: string
   description: string
-  optional?: boolean
 }> = [
-  { id: 'building', label: 'Country', description: 'Datos base del country o consorcio.' },
-  {
-    id: 'administration',
-    label: 'Quién administra',
-    description: 'Datos de la administración del consorcio. Puedes dejarlo para después.',
-    optional: true,
-  },
-  { id: 'property', label: 'Datos en Countrify', description: 'Como queda configurado el consorcio dentro del sistema.' },
-  { id: 'admin', label: 'Administrador inicial', description: 'Cuenta que operara este consorcio.' },
-  { id: 'summary', label: 'Resumen', description: 'Verificacion final antes de crear.' },
+  { id: 'consorcio', label: 'El consorcio', description: 'Nombre, tipo y ubicación del consorcio o country.' },
+  { id: 'admin', label: 'Administrador', description: 'La cuenta que va a operar el consorcio.' },
+  { id: 'summary', label: 'Resumen', description: 'Verificación final antes de crear.' },
 ]
 
 export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: SuperAdminConsorcioAdminOption[] }) {
@@ -68,6 +60,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
   const [consorcioStepIndex, setConsorcioStepIndex] = useState(0)
   const [createdConsorcio, setCreatedConsorcio] = useState<CreatedConsorcio | null>(null)
   const [administrationNameTouched, setAdministrationNameTouched] = useState(false)
+  const [showOptional, setShowOptional] = useState(false)
   const [consorcioLocationSearching, setConsorcioLocationSearching] = useState(false)
   const [mapRecenterKey, setMapRecenterKey] = useState(0)
   const mapCardRef = useRef<HTMLDivElement>(null)
@@ -115,6 +108,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
       newAdminPassword: 'Countrify2026!',
     })
     setAdministrationNameTouched(false)
+    setShowOptional(false)
     setConsorcioStepIndex(0)
   }
 
@@ -147,8 +141,6 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
           latitude: String(parseFloat(data[0].lat)),
           longitude: String(parseFloat(data[0].lon)),
         }))
-        // Recentrar el mapa al punto encontrado y traerlo a la vista, así no
-        // hay que arrastrarlo/scrollear para verlo.
         setMapRecenterKey((key) => key + 1)
         requestAnimationFrame(() => {
           mapCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
@@ -164,8 +156,6 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
     }
   }
 
-  // Geocoding inverso: cuando se mueve el pin en el mapa, completar de vuelta
-  // la direccion y la localidad a partir de las coordenadas elegidas.
   async function reverseGeocodeToAddress(lat: number, lng: number) {
     try {
       const response = await fetch(
@@ -196,9 +186,10 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
   function getConsorcioStepError(stepIndex = consorcioStepIndex) {
     const step = CONSORCIO_WIZARD_STEPS[stepIndex]
 
-    if (step.id === 'building') {
-      if (!consorcioDraft.buildingName.trim()) return 'Completa el nombre del country.'
-      if (!consorcioDraft.buildingAddress.trim()) return 'Completa la direccion del country.'
+    if (step.id === 'consorcio') {
+      if (!consorcioDraft.buildingName.trim()) return 'Completa el nombre del consorcio.'
+      if (!consorcioDraft.propertyKind) return 'Selecciona el tipo de consorcio.'
+      if (!consorcioDraft.buildingAddress.trim()) return 'Completa la direccion del consorcio.'
       if (!consorcioDraft.totalUnits.trim()) return 'Indica la cantidad total de unidades.'
 
       const totalUnits = Number(consorcioDraft.totalUnits)
@@ -212,16 +203,6 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
       }
     }
 
-    if (step.id === 'property') {
-      if (!consorcioDraft.propertyKind) return 'Selecciona el tipo de consorcio.'
-      if (consorcioDraft.managementFeePct) {
-        const fee = Number(consorcioDraft.managementFeePct.replace(',', '.'))
-        if (!Number.isFinite(fee) || fee < 0 || fee > 100) {
-          return 'El fee de administracion debe estar entre 0 y 100.'
-        }
-      }
-    }
-
     if (step.id === 'admin') {
       if (consorcioDraft.adminMode === 'new') {
         if (consorcioDraft.newAdminFullName.trim().length < 2) return 'Ingresa el nombre del administrador.'
@@ -230,6 +211,13 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
       } else {
         if (consorcioAdmins.length === 0) return 'No hay admins existentes. Crea uno nuevo desde acá o en la sección Usuarios.'
         if (!consorcioDraft.adminProfileId) return 'Selecciona el administrador inicial.'
+      }
+
+      if (consorcioDraft.managementFeePct) {
+        const fee = Number(consorcioDraft.managementFeePct.replace(',', '.'))
+        if (!Number.isFinite(fee) || fee < 0 || fee > 100) {
+          return 'El fee de administracion debe estar entre 0 y 100.'
+        }
       }
     }
 
@@ -268,8 +256,6 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
   function submitConsorcio(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
 
-    // Guardia anti-Enter: si el user presiona Enter antes de "summary", avanzamos
-    // de paso en vez de crear el country salteando la validación final.
     if (currentConsorcioStep.id !== 'summary') {
       nextConsorcioStep()
       return
@@ -378,8 +364,8 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
           <div className="text-xs font-medium uppercase tracking-wider text-primary">Wizard de alta</div>
           <h3 className="mt-1 text-sm font-semibold text-foreground">Nuevo consorcio / country</h3>
           <p className="mt-1 max-w-2xl text-xs text-muted-foreground">
-            Crea el country, la administracion y la configuracion IAdmin con un flujo guiado y deja asignado el admin
-            consorcio en una sola accion.
+            Cargá los datos del consorcio y la cuenta del administrador. Lo opcional (facturación, fee, etc.) podés
+            dejarlo para después: se autocompleta y lo editás desde el detalle.
           </p>
         </div>
         <div className="rounded-full border border-border/40 bg-background/70 px-3 py-1 text-xs text-muted-foreground">
@@ -387,7 +373,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
         </div>
       </div>
 
-      <div className="mt-5 grid gap-2 md:grid-cols-5">
+      <div className="mt-5 grid gap-2 md:grid-cols-3">
         {CONSORCIO_WIZARD_STEPS.map((step, index) => {
           const isActive = index === consorcioStepIndex
           const isCompleted = index < consorcioStepIndex
@@ -408,10 +394,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
                 <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                   {String(index + 1).padStart(2, '0')}
                 </span>
-                <div className="flex items-center gap-2">
-                  {step.optional && <Badge color="default">Opcional</Badge>}
-                  {isCompleted && <Badge color="success">Listo</Badge>}
-                </div>
+                {isCompleted && <Badge color="success">Listo</Badge>}
               </div>
               <div className="mt-2 text-sm font-semibold text-foreground">{step.label}</div>
               <p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
@@ -422,40 +405,54 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
 
       <div className="mt-5 space-y-5 rounded-2xl border border-border/40 bg-background/70 p-4">
         <div className="mb-1">
-          <div className="flex items-center gap-2">
-            <p className="text-xs font-medium uppercase tracking-wider text-primary">{currentConsorcioStep.label}</p>
-            {currentConsorcioStep.optional && <Badge color="default">Opcional</Badge>}
-          </div>
+          <p className="text-xs font-medium uppercase tracking-wider text-primary">{currentConsorcioStep.label}</p>
           <p className="mt-1 text-sm text-muted-foreground">{currentConsorcioStep.description}</p>
         </div>
 
-        {currentConsorcioStep.id === 'building' && (
+        {currentConsorcioStep.id === 'consorcio' && (
           <div className="space-y-5">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Country</p>
-              <p className="text-xs text-muted-foreground">
-                Carga el nombre, la direccion y marca la ubicacion en el mapa para dejar el consorcio listo desde el alta.
-              </p>
-            </div>
-
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Input
-                placeholder="Nombre del country"
-                value={consorcioDraft.buildingName}
-                onChange={(e) => updateBuildingName(e.target.value)}
-                required
-              />
               <div className="space-y-1">
+                <Label>Nombre del consorcio / country</Label>
                 <Input
-                  placeholder="Capacidad estimada (informativa)"
+                  placeholder="Ej. Country Las Marías"
+                  value={consorcioDraft.buildingName}
+                  onChange={(e) => updateBuildingName(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <Label>Tipo</Label>
+                <select
+                  className="flex h-9 w-full rounded-md border border-border/50 bg-background px-3 py-1 text-sm"
+                  value={consorcioDraft.propertyKind}
+                  onChange={(e) => setConsorcioDraft({ ...consorcioDraft, propertyKind: e.target.value as IAdminPropertyKind })}
+                >
+                  {PROPERTY_KIND_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <Label>Capacidad estimada (informativa)</Label>
+                <Input
+                  placeholder="Ej. 120"
                   inputMode="numeric"
                   value={consorcioDraft.totalUnits}
                   onChange={(e) => setConsorcioDraft({ ...consorcioDraft, totalUnits: e.target.value })}
                   required
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  Solo es un dato informativo del country. Las unidades reales las carga el administrador desde IAdmin o importando un Excel.
+                  Dato informativo. Las unidades reales las carga el administrador desde IAdmin o importando un Excel.
                 </p>
+              </div>
+              <div className="space-y-1">
+                <Label>Nombre a mostrar (opcional)</Label>
+                <Input
+                  placeholder="Si lo dejás vacío, usa el nombre del consorcio"
+                  value={consorcioDraft.displayName}
+                  onChange={(e) => setConsorcioDraft({ ...consorcioDraft, displayName: e.target.value })}
+                />
               </div>
             </div>
 
@@ -464,7 +461,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
                 <div className="flex-1">
                   <h3 className="font-semibold text-foreground mb-2 flex items-center gap-2">
                     <MapPin className="w-4 h-4 text-primary" />
-                    Ubicacion del country
+                    Ubicacion del consorcio
                   </h3>
                   <p className="text-sm text-muted-foreground mb-4">
                     Busca la direccion y, si hace falta, corrige manualmente el punto haciendo click en el mapa.
@@ -527,108 +524,16 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
           </div>
         )}
 
-        {currentConsorcioStep.id === 'administration' && (
-          <div className="space-y-5">
-            <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Quién administra</p>
-                <p className="text-xs text-muted-foreground">
-                  Si no completas este paso, Countrify creará una administración mínima usando el nombre del country.
-                  Luego podrás editarla desde el detalle del consorcio.
-                </p>
-              </div>
-              <Badge color="default">Opcional</Badge>
-            </div>
-
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-              <Input
-                placeholder="Nombre de la administración"
-                value={consorcioDraft.administrationName}
-                onChange={(event) => {
-                  setAdministrationNameTouched(true)
-                  setConsorcioDraft({ ...consorcioDraft, administrationName: event.target.value })
-                }}
-              />
-              <Input
-                placeholder="Razón social"
-                value={consorcioDraft.administrationLegalName}
-                onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationLegalName: event.target.value })}
-              />
-              <Input
-                placeholder="CUIT"
-                value={consorcioDraft.administrationTaxId}
-                onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationTaxId: event.target.value })}
-              />
-              <Input
-                placeholder="Email"
-                type="email"
-                value={consorcioDraft.administrationContactEmail}
-                onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationContactEmail: event.target.value })}
-              />
-              <Input
-                placeholder="Teléfono"
-                value={consorcioDraft.administrationContactPhone}
-                onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationContactPhone: event.target.value })}
-              />
-            </div>
-          </div>
-        )}
-
-        {currentConsorcioStep.id === 'property' && (
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Configuración del consorcio</p>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              <input
-                className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm"
-                placeholder="Nombre a mostrar (opcional)"
-                value={consorcioDraft.displayName}
-                onChange={(e) => setConsorcioDraft({ ...consorcioDraft, displayName: e.target.value })}
-              />
-              <select
-                className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm"
-                value={consorcioDraft.propertyKind}
-                onChange={(e) => setConsorcioDraft({ ...consorcioDraft, propertyKind: e.target.value as IAdminPropertyKind })}
-              >
-                {PROPERTY_KIND_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
-              <input
-                className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm"
-                placeholder="CUIT del consorcio"
-                value={consorcioDraft.propertyTaxId}
-                onChange={(e) => setConsorcioDraft({ ...consorcioDraft, propertyTaxId: e.target.value })}
-              />
-              <input
-                className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm"
-                placeholder="Inicio de gestión"
-                type="date"
-                value={consorcioDraft.managedSince}
-                onChange={(e) => setConsorcioDraft({ ...consorcioDraft, managedSince: e.target.value })}
-              />
-              <input
-                className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm"
-                placeholder="Fee administración (%)"
-                inputMode="decimal"
-                value={consorcioDraft.managementFeePct}
-                onChange={(e) => setConsorcioDraft({ ...consorcioDraft, managementFeePct: e.target.value })}
-              />
-              <textarea
-                className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm outline-none md:col-span-3"
-                rows={2}
-                placeholder="Notas iniciales"
-                value={consorcioDraft.notes}
-                onChange={(e) => setConsorcioDraft({ ...consorcioDraft, notes: e.target.value })}
-              />
-            </div>
-          </div>
-        )}
-
         {currentConsorcioStep.id === 'admin' && (
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Administrador inicial</p>
+          <div className="space-y-5">
+            <div>
+              <p className="text-xs text-muted-foreground">
+                Esta es la cuenta con la que el administrador <strong>inicia sesión</strong> y opera el consorcio
+                (cobranzas, gastos, liquidaciones, vecinos).
+              </p>
+            </div>
 
-            <div className="inline-flex rounded-lg border border-border/50 p-0.5 mb-4 text-sm">
+            <div className="inline-flex rounded-lg border border-border/50 p-0.5 text-sm">
               <button
                 type="button"
                 onClick={() => setConsorcioDraft({ ...consorcioDraft, adminMode: 'existing' })}
@@ -706,6 +611,95 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
                 </div>
               </div>
             )}
+
+            {/* Bloque opcional: administración (facturación) + configuración avanzada */}
+            <div className="rounded-xl border border-border/40 bg-background/50">
+              <button
+                type="button"
+                onClick={() => setShowOptional((v) => !v)}
+                className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left"
+              >
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold text-foreground">Datos opcionales</span>
+                    <Badge color="default">Opcional</Badge>
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Administración (facturación) y configuración. Si lo dejás vacío, se autocompleta y lo editás después.
+                  </p>
+                </div>
+                <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${showOptional ? 'rotate-180' : ''}`} />
+              </button>
+
+              {showOptional && (
+                <div className="space-y-5 border-t border-border/40 px-4 py-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Administración (facturación)</p>
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <Input
+                        placeholder="Nombre de la administración"
+                        value={consorcioDraft.administrationName}
+                        onChange={(event) => {
+                          setAdministrationNameTouched(true)
+                          setConsorcioDraft({ ...consorcioDraft, administrationName: event.target.value })
+                        }}
+                      />
+                      <Input
+                        placeholder="Razón social"
+                        value={consorcioDraft.administrationLegalName}
+                        onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationLegalName: event.target.value })}
+                      />
+                      <Input
+                        placeholder="CUIT"
+                        value={consorcioDraft.administrationTaxId}
+                        onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationTaxId: event.target.value })}
+                      />
+                      <Input
+                        placeholder="Email"
+                        type="email"
+                        value={consorcioDraft.administrationContactEmail}
+                        onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationContactEmail: event.target.value })}
+                      />
+                      <Input
+                        placeholder="Teléfono"
+                        value={consorcioDraft.administrationContactPhone}
+                        onChange={(event) => setConsorcioDraft({ ...consorcioDraft, administrationContactPhone: event.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Configuración</p>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <Input
+                        placeholder="CUIT del consorcio"
+                        value={consorcioDraft.propertyTaxId}
+                        onChange={(e) => setConsorcioDraft({ ...consorcioDraft, propertyTaxId: e.target.value })}
+                      />
+                      <Input
+                        placeholder="Inicio de gestión"
+                        type="date"
+                        value={consorcioDraft.managedSince}
+                        onChange={(e) => setConsorcioDraft({ ...consorcioDraft, managedSince: e.target.value })}
+                      />
+                      <Input
+                        placeholder="Fee administración (%)"
+                        inputMode="decimal"
+                        value={consorcioDraft.managementFeePct}
+                        onChange={(e) => setConsorcioDraft({ ...consorcioDraft, managementFeePct: e.target.value })}
+                      />
+                      <textarea
+                        className="rounded-lg border border-border/50 bg-background px-3 py-2 text-sm outline-none md:col-span-3"
+                        rows={2}
+                        placeholder="Notas iniciales"
+                        value={consorcioDraft.notes}
+                        onChange={(e) => setConsorcioDraft({ ...consorcioDraft, notes: e.target.value })}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -719,8 +713,13 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
             </div>
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <div className="rounded-xl border border-border/40 bg-background/60 p-4">
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Country</div>
-                <div className="mt-2 text-sm font-semibold text-foreground">{consorcioDraft.buildingName || 'Sin nombre'}</div>
+                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">El consorcio</div>
+                <div className="mt-2 text-sm font-semibold text-foreground">
+                  {consorcioDraft.displayName.trim() || consorcioDraft.buildingName || 'Sin nombre'}
+                </div>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Tipo: {PROPERTY_KIND_OPTIONS.find((option) => option.value === consorcioDraft.propertyKind)?.label}
+                </p>
                 <p className="mt-1 text-xs text-muted-foreground">{consorcioDraft.buildingAddress || 'Sin direccion'}</p>
                 <p className="mt-2 text-xs text-muted-foreground">Unidades: {consorcioDraft.totalUnits || '0'}</p>
                 <p className="mt-2 text-xs text-muted-foreground">
@@ -731,42 +730,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
                 </p>
               </div>
               <div className="rounded-xl border border-border/40 bg-background/60 p-4">
-                <div className="flex items-center gap-2">
-                  <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Quién administra</div>
-                  <Badge color="default">Opcional</Badge>
-                </div>
-                <div className="mt-2 text-sm font-semibold text-foreground">
-                  {administrationSummaryName || 'Se usará el nombre del country'}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {hasAdministrationCustomData
-                    ? 'Se guardarán los datos cargados para la administración.'
-                    : 'Si no completas este paso, se creará automáticamente con el nombre del country.'}
-                </p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {consorcioDraft.administrationContactEmail.trim() || 'Sin email'}
-                  {consorcioDraft.administrationContactPhone.trim() ? ` · ${consorcioDraft.administrationContactPhone.trim()}` : ''}
-                </p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {consorcioDraft.administrationLegalName.trim() || 'Sin razón social'}
-                  {consorcioDraft.administrationTaxId.trim() ? ` · CUIT ${consorcioDraft.administrationTaxId.trim()}` : ''}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border/40 bg-background/60 p-4">
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Datos del consorcio en Countrify</div>
-                <div className="mt-2 text-sm font-semibold text-foreground">
-                  {consorcioDraft.displayName || consorcioDraft.buildingName || 'Se usara el nombre del country'}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Tipo: {PROPERTY_KIND_OPTIONS.find((option) => option.value === consorcioDraft.propertyKind)?.label}
-                </p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  {consorcioDraft.managedSince ? `Gestion desde ${consorcioDraft.managedSince}` : 'Sin fecha inicial'}
-                  {consorcioDraft.managementFeePct ? ` · Fee ${consorcioDraft.managementFeePct}%` : ''}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border/40 bg-background/60 p-4">
-                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Administrador inicial</div>
+                <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Administrador</div>
                 {consorcioDraft.adminMode === 'new' ? (
                   <>
                     <div className="mt-2 text-sm font-semibold text-foreground">
@@ -785,6 +749,31 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
                     </p>
                     <p className="mt-2 text-xs text-muted-foreground">{describeAdminAssignment(selectedConsorcioAdmin)}</p>
                   </>
+                )}
+              </div>
+              <div className="rounded-xl border border-border/40 bg-background/60 p-4 md:col-span-2">
+                <div className="flex items-center gap-2">
+                  <div className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Datos opcionales</div>
+                  <Badge color="default">Opcional</Badge>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Administración: {administrationSummaryName || 'se usará el nombre del consorcio'}
+                  {hasAdministrationCustomData
+                    ? ''
+                    : ' (mínima, autocompletada)'}
+                </p>
+                {(consorcioDraft.administrationContactEmail.trim() || consorcioDraft.administrationLegalName.trim() || consorcioDraft.administrationTaxId.trim()) && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {consorcioDraft.administrationLegalName.trim() || 'Sin razón social'}
+                    {consorcioDraft.administrationTaxId.trim() ? ` · CUIT ${consorcioDraft.administrationTaxId.trim()}` : ''}
+                    {consorcioDraft.administrationContactEmail.trim() ? ` · ${consorcioDraft.administrationContactEmail.trim()}` : ''}
+                  </p>
+                )}
+                {(consorcioDraft.managedSince || consorcioDraft.managementFeePct) && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {consorcioDraft.managedSince ? `Gestión desde ${consorcioDraft.managedSince}` : ''}
+                    {consorcioDraft.managementFeePct ? ` · Fee ${consorcioDraft.managementFeePct}%` : ''}
+                  </p>
                 )}
               </div>
             </div>
