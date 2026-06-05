@@ -299,10 +299,22 @@ function cleanCell(raw: unknown): string {
 
 function normalizeProrata(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === '') return null
-  const s = String(raw).replace('%', '').replace(',', '.').trim()
+  const original = String(raw).trim()
+  if (!original) return null
+  const hadPercent = original.includes('%')
+  // Coma decimal (es-AR): "1,375" -> "1.375". Si hay coma Y punto (formato
+  // "1.234,56") el punto es separador de miles, lo quitamos.
+  let s = original.replace('%', '').replace(/\s/g, '')
+  if (s.includes(',')) {
+    s = s.replace(/\./g, '').replace(',', '.')
+  }
   const n = Number(s)
-  if (!Number.isFinite(n)) return null
-  if (n < 0) return null
+  if (!Number.isFinite(n) || n < 0) return null
+  // Si venía con signo %, es porcentaje sí o sí -> coeficiente = n / 100.
+  // (Antes "1,375%" caía en n<=1.5 y se guardaba como 1.375 = 137.5%.)
+  if (hadPercent) return n / 100
+  // Sin signo %: heurística. >1.5 se asume porcentaje (12.5 -> 0.125);
+  // <=1.5 se asume coeficiente decimal ya normalizado (0.125).
   if (n > 1.5) return n / 100
   return n
 }
