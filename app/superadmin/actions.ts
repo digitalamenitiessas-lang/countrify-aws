@@ -473,8 +473,14 @@ const createManagedPropertySchema = z.object({
     displayName: z.string().trim().max(120).nullable().optional(),
     propertyKind: z.enum(propertyKindValues),
     taxId: z.string().trim().max(32).nullable().optional(),
-    managedSince: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-    managementFeePct: z.number().min(0).max(100).nullable().optional(),
+    managedSince: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+      z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    ),
+    managementFeePct: z.preprocess(
+      (v) => (v === '' || v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v)) ? null : v),
+      z.number().min(0).max(100).nullable().optional(),
+    ),
     notes: z.string().trim().max(1000).nullable().optional(),
   }),
   adminProfileId: z.string().uuid(),
