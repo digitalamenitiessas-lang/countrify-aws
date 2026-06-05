@@ -87,41 +87,99 @@ Reglas:
 - Si no matchea con ninguno, devolver "ignore".
 - Devolvé SOLO el JSON, sin texto adicional.`
 
+// Campos que deben mapear a una sola columna (no tiene sentido repetirlos).
+const UNIQUE_TARGET_FIELDS: ImportTargetField[] = [
+  'unit_code',
+  'unit_kind',
+  'floor',
+  'surface_m2',
+  'prorata_percent',
+  'holder_name',
+  'holder_kind',
+  'holder_tax_id',
+  'holder_email',
+  'holder_phone',
+]
+
+function normalizeHeader(header: string): string {
+  return String(header ?? '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '') // saca acentos
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+}
+
+// Mapeo determinístico por nombre de columna (y, como respaldo, por contenido).
+// Devuelve null si no hay match claro (ahí entra la IA).
+function heuristicTargetForHeader(header: string, samples: unknown[]): ImportTargetField | null {
+  const h = normalizeHeader(header)
+  if (!h) return null
+  const has = (...kw: string[]) => kw.some((k) => h.includes(k))
+
+  // holder_kind ANTES que unit_kind / holder_name ("tipo titular" contiene "tipo" y "titular").
+  if (has('tipo titular', 'tipo de titular', 'relacion', 'condicion', 'caracter', 'propietario inquilino', 'prop inquilino')) return 'holder_kind'
+  if (has('cuit', 'cuil', 'dni', 'documento')) return 'holder_tax_id'
+  if (has('email', 'e mail', 'mail', 'correo')) return 'holder_email'
+  if (has('telefono', 'celular', 'whatsapp', 'movil') || h === 'tel' || h === 'cel') return 'holder_phone'
+  if (has('alicuota', 'coeficiente', 'coef', 'prorrateo', 'prorrata', 'porcentaje', 'porcentual') || h.includes('%') || h === 'porc') return 'prorata_percent'
+  if (has('superficie', 'metros', 'm2', 'mts') || h === 'sup') return 'surface_m2'
+  if (has('piso', 'planta', 'nivel')) return 'floor'
+  if (has('tipo unidad', 'tipo de unidad', 'clase')) return 'unit_kind'
+  if (has('titular', 'propietario', 'dueno', 'responsable', 'apellido', 'nombre', 'vecino', 'ocupante')) return 'holder_name'
+  if (has('unidad', 'lote', 'codigo', 'departamento', 'depto', 'manzana', 'parcela') || h === 'cod' || h === 'uf' || h === 'nro' || h === 'numero' || h === 'casa') return 'unit_code'
+  if (h === 'tipo') return 'unit_kind'
+
+  // Respaldo por contenido cuando el header no dice nada.
+  const sampleStr = samples.map((s) => String(s ?? '')).join(' ')
+  if (/@/.test(sampleStr)) return 'holder_email'
+
+  return null
+}
+
 export async function analyzeUnitsColumns(input: {
   headers: string[]
   sampleRows: Array<Record<string, unknown>>
 }): Promise<AnalyzeColumnsResult> {
-  const userPrompt = `Headers:\n${JSON.stringify(input.headers)}\n\nMuestras de filas:\n${JSON.stringify(input.sampleRows, null, 2)}\n\nDevolvé el JSON de mapeo.`
-
-  const raw = await runAIChat({
-    systemPrompt: SYSTEM_PROMPT,
-    userPrompt,
-    jsonMode: true,
-    temperature: 0,
-    maxTokens: 800,
-  })
-
-  const cleaned = stripJsonFences(raw)
-  let parsedJson: unknown
-  try {
-    parsedJson = JSON.parse(cleaned)
-  } catch {
-    throw new Error('La IA devolvio un formato invalido')
-  }
-
   const mapping: Record<string, ImportTargetField> = {}
-  if (typeof parsedJson === 'object' && parsedJson !== null) {
-    for (const [k, v] of Object.entries(parsedJson as Record<string, unknown>)) {
-      if (typeof v === 'string' && (unitsImportTargetFields as readonly string[]).includes(v)) {
-        mapping[k] = v as ImportTargetField
-      } else {
-        mapping[k] = 'ignore'
-      }
+  const used = new Set<ImportTargetField>()
+
+  // 1) Heurística determinística por nombre de columna (no depende de la IA).
+  for (const header of input.headers) {
+    const samples = input.sampleRows.map((row) => row[header])
+    const target = heuristicTargetForHeader(header, samples)
+    if (target && !(UNIQUE_TARGET_FIELDS.includes(target) && used.has(target))) {
+      mapping[header] = target
+      used.add(target)
     }
   }
 
-  for (const h of input.headers) {
-    if (!(h in mapping)) mapping[h] = 'ignore'
+  // 2) IA solo para las columnas que la heurística no resolvió. Si falla, no rompe.
+  const unresolved = input.headers.filter((header) => !mapping[header])
+  if (unresolved.length > 0) {
+    try {
+      const userPrompt = `Headers:\n${JSON.stringify(unresolved)}\n\nMuestras de filas:\n${JSON.stringify(input.sampleRows, null, 2)}\n\nDevolvé el JSON de mapeo.`
+      const raw = await runAIChat({ systemPrompt: SYSTEM_PROMPT, userPrompt, jsonMode: true, temperature: 0, maxTokens: 800 })
+      const parsedJson = JSON.parse(stripJsonFences(raw)) as unknown
+      if (typeof parsedJson === 'object' && parsedJson !== null) {
+        for (const [k, v] of Object.entries(parsedJson as Record<string, unknown>)) {
+          if (!unresolved.includes(k)) continue
+          if (typeof v === 'string' && v !== 'ignore' && (unitsImportTargetFields as readonly string[]).includes(v)) {
+            const target = v as ImportTargetField
+            if (UNIQUE_TARGET_FIELDS.includes(target) && used.has(target)) continue
+            mapping[k] = target
+            used.add(target)
+          }
+        }
+      }
+    } catch {
+      // IA opcional: si falla o no está configurada, seguimos con la heurística.
+    }
+  }
+
+  // 3) Todo lo no resuelto queda en "ignore" (editable a mano en el wizard).
+  for (const header of input.headers) {
+    if (!mapping[header]) mapping[header] = 'ignore'
   }
 
   return { mapping, labels: UNITS_IMPORT_TARGET_LABELS }
