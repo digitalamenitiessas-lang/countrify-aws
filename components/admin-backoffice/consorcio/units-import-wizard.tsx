@@ -89,6 +89,14 @@ const TARGET_OPTIONS: Array<{ value: ImportTargetField; label: string }> = [
   { value: 'holder_tax_id', label: 'CUIT / DNI' },
   { value: 'holder_email', label: 'Email' },
   { value: 'holder_phone', label: 'Teléfono' },
+  { value: 'owner_name', label: 'Nombre propietario' },
+  { value: 'owner_tax_id', label: 'CUIT / DNI propietario' },
+  { value: 'owner_email', label: 'Email propietario' },
+  { value: 'owner_phone', label: 'Teléfono propietario' },
+  { value: 'tenant_name', label: 'Nombre inquilino' },
+  { value: 'tenant_tax_id', label: 'CUIT / DNI inquilino' },
+  { value: 'tenant_email', label: 'Email inquilino' },
+  { value: 'tenant_phone', label: 'Teléfono inquilino' },
 ]
 
 export function UnitsImportWizard({
@@ -288,7 +296,7 @@ export function UnitsImportWizard({
         <dl className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
           <Stat label="Unidades nuevas" value={result.unitsCreated} tone="ok" />
           <Stat label="Unidades actualizadas" value={result.unitsUpdated} />
-          <Stat label="Titulares nuevos" value={result.holdersCreated} tone="ok" />
+          <Stat label="Titulares nuevos" value={result.holdersCreated + result.ownersCreated + result.tenantsCreated} tone="ok" />
           <Stat label="Filas salteadas" value={result.skippedRows.length} tone={result.skippedRows.length > 0 ? 'warning' : 'ok'} />
         </dl>
         {result.skippedRows.length > 0 ? (
@@ -559,6 +567,14 @@ function PreviewTable({
     { field: 'holder_tax_id', label: 'CUIT/DNI' },
     { field: 'holder_email', label: 'Email' },
     { field: 'holder_phone', label: 'Tel.' },
+    { field: 'owner_name', label: 'Propietario' },
+    { field: 'owner_tax_id', label: 'CUIT/DNI prop.' },
+    { field: 'owner_email', label: 'Email prop.' },
+    { field: 'owner_phone', label: 'Tel. prop.' },
+    { field: 'tenant_name', label: 'Inquilino' },
+    { field: 'tenant_tax_id', label: 'CUIT/DNI inq.' },
+    { field: 'tenant_email', label: 'Email inq.' },
+    { field: 'tenant_phone', label: 'Tel. inq.' },
   ]
   const cols = previewCols.filter((c) => targetToSource[c.field])
 

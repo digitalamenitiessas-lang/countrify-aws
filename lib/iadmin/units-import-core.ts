@@ -18,11 +18,24 @@ export const unitsImportTargetFields = [
   'floor',
   'surface_m2',
   'prorata_percent',
+  // Titular genérico: para planillas simples con UNA columna de persona + una
+  // columna de tipo (propietario/inquilino/...). holder_kind define el vínculo.
   'holder_name',
   'holder_kind',
   'holder_tax_id',
   'holder_email',
   'holder_phone',
+  // Propietario (dueño). Siempre se crea como holder con kind='propietario'.
+  // Para planillas con columnas separadas Propietario + Inquilino.
+  'owner_name',
+  'owner_tax_id',
+  'owner_email',
+  'owner_phone',
+  // Inquilino. Siempre se crea como holder con kind='inquilino'.
+  'tenant_name',
+  'tenant_tax_id',
+  'tenant_email',
+  'tenant_phone',
   'ignore',
 ] as const
 
@@ -39,6 +52,14 @@ export const UNITS_IMPORT_TARGET_LABELS: Record<ImportTargetField, string> = {
   holder_tax_id: 'CUIT / DNI',
   holder_email: 'Email titular',
   holder_phone: 'Teléfono titular',
+  owner_name: 'Nombre propietario',
+  owner_tax_id: 'CUIT / DNI propietario',
+  owner_email: 'Email propietario',
+  owner_phone: 'Teléfono propietario',
+  tenant_name: 'Nombre inquilino',
+  tenant_tax_id: 'CUIT / DNI inquilino',
+  tenant_email: 'Email inquilino',
+  tenant_phone: 'Teléfono inquilino',
   ignore: 'Ignorar columna',
 }
 
@@ -50,7 +71,12 @@ export type AnalyzeColumnsResult = {
 export type ImportResult = {
   unitsCreated: number
   unitsUpdated: number
+  /** Titulares genéricos creados desde columnas holder_* (planillas de una sola persona). */
   holdersCreated: number
+  /** Propietarios creados como titular con vínculo 'propietario' desde columnas owner_*. */
+  ownersCreated: number
+  /** Inquilinos creados como titular con vínculo 'inquilino' desde columnas tenant_*. */
+  tenantsCreated: number
   holdersSkipped: number
   skippedRows: Array<{ index: number; reason: string }>
 }
@@ -63,12 +89,20 @@ El sistema necesita estos campos posibles:
 - floor: piso (ej "1", "PB", "PH")
 - surface_m2: superficie en m2
 - prorata_percent: alicuota en %. Aceptá tanto decimal (0.125) como porcentaje (12.5).
-- holder_name: nombre completo del titular/propietario/inquilino
+- holder_name: nombre completo del titular principal (quien usa la unidad: dueño residente o inquilino)
 - holder_kind: tipo de relacion (propietario, inquilino, apoderado, otro)
-- holder_tax_id: CUIT o DNI del titular
-- holder_email: email del titular
-- holder_phone: telefono del titular
-- ignore: columna que no matchea con ninguno de los anteriores
+- holder_tax_id: CUIT o DNI del titular principal
+- holder_email: email del titular principal
+- holder_phone: telefono del titular principal
+- owner_name: nombre del PROPIETARIO (dueño de la unidad). Se crea como titular con vínculo "propietario".
+- owner_tax_id: CUIT o DNI del propietario
+- owner_email: email del propietario
+- owner_phone: telefono del propietario
+- tenant_name: nombre del INQUILINO (quien alquila / ocupa la unidad sin ser dueño). Se crea como titular con vínculo "inquilino".
+- tenant_tax_id: CUIT o DNI del inquilino
+- tenant_email: email del inquilino
+- tenant_phone: telefono del inquilino
+- ignore: columna que no matchea con ninguno de los anteriores (ej. "Estado Ocupación", "Vencimiento de contrato", saldos, recibos)
 
 Recibis los headers y muestras de filas del Excel del admin. Tu trabajo es devolver un JSON EXACTO que mapee cada header original al campo target correspondiente:
 
@@ -84,21 +118,20 @@ Reglas:
 - Si una columna tiene numeros entre 0 y 1 tipo 0.125, 0.15 es prorata_percent (decimal).
 - Si una columna tiene numeros tipo 12.5, 20.00, 100 es prorata_percent (porcentaje).
 - Si una columna tiene nombres tipo "Departamento", "Casa" es unit_kind.
+- IMPORTANTE: si la planilla tiene columnas SEPARADAS para el dueño y para quien alquila (ej. "Propietario" + "Inquilino", o "Dueño" + "Locatario"), mapeá las del dueño a owner_* y las del inquilino a tenant_*. NO uses holder_* en ese caso.
+- Las columnas que mencionan "propietario", "dueño", "owner", "titular dominial" van a owner_name/owner_tax_id/owner_email/owner_phone.
+- Las columnas que mencionan "inquilino", "locatario", "tenant", "arrendatario" van a tenant_name/tenant_tax_id/tenant_email/tenant_phone.
+- Usá holder_* SOLO cuando hay UNA sola persona por unidad sin distinción de rol (planilla simple con una columna "Titular"/"Responsable" y opcionalmente una columna de tipo).
+- "Estado Ocupación" / "Ocupación" / "Vto. Contrato" / "Vencimiento" / saldos / recibos / expensas van a ignore.
 - Si no matchea con ninguno, devolver "ignore".
 - Devolvé SOLO el JSON, sin texto adicional.`
 
 // Campos que deben mapear a una sola columna (no tiene sentido repetirlos).
 const UNIQUE_TARGET_FIELDS: ImportTargetField[] = [
-  'unit_code',
-  'unit_kind',
-  'floor',
-  'surface_m2',
-  'prorata_percent',
-  'holder_name',
-  'holder_kind',
-  'holder_tax_id',
-  'holder_email',
-  'holder_phone',
+  'unit_code', 'unit_kind', 'floor', 'surface_m2', 'prorata_percent',
+  'holder_name', 'holder_kind', 'holder_tax_id', 'holder_email', 'holder_phone',
+  'owner_name', 'owner_tax_id', 'owner_email', 'owner_phone',
+  'tenant_name', 'tenant_tax_id', 'tenant_email', 'tenant_phone',
 ]
 
 function normalizeHeader(header: string): string {
@@ -111,22 +144,46 @@ function normalizeHeader(header: string): string {
 }
 
 // Mapeo determinístico por nombre de columna (y, como respaldo, por contenido).
-// Devuelve null si no hay match claro (ahí entra la IA).
+// Reconoce el patrón de columnas separadas propietario/inquilino. Devuelve null
+// si no hay match claro (ahí entra la IA).
 function heuristicTargetForHeader(header: string, samples: unknown[]): ImportTargetField | null {
   const h = normalizeHeader(header)
   if (!h) return null
   const has = (...kw: string[]) => kw.some((k) => h.includes(k))
 
-  // holder_kind ANTES que unit_kind / holder_name ("tipo titular" contiene "tipo" y "titular").
-  if (has('tipo titular', 'tipo de titular', 'relacion', 'condicion', 'caracter', 'propietario inquilino', 'prop inquilino')) return 'holder_kind'
-  if (has('cuit', 'cuil', 'dni', 'documento')) return 'holder_tax_id'
-  if (has('email', 'e mail', 'mail', 'correo')) return 'holder_email'
-  if (has('telefono', 'celular', 'whatsapp', 'movil') || h === 'tel' || h === 'cel') return 'holder_phone'
+  const isEmail = has('email', 'e mail', 'mail', 'correo')
+  const isPhone = has('telefono', 'celular', 'whatsapp', 'movil') || h === 'tel' || h === 'cel'
+  const isTax = has('cuit', 'cuil', 'dni', 'documento')
+  const isOwnerQualified = has('propietario', 'dueno', 'titular dominial', 'owner')
+  const isTenantQualified = has('inquilino', 'locatario', 'arrendatario', 'tenant')
+
+  // tipo titular / relación va a holder_kind (antes de cualquier otra cosa con "tipo"/"titular")
+  if (has('tipo titular', 'tipo de titular', 'relacion', 'condicion', 'caracter')) return 'holder_kind'
+
+  // Columnas calificadas como propietario
+  if (isOwnerQualified) {
+    if (isEmail) return 'owner_email'
+    if (isPhone) return 'owner_phone'
+    if (isTax) return 'owner_tax_id'
+    return 'owner_name'
+  }
+  // Columnas calificadas como inquilino
+  if (isTenantQualified) {
+    if (isEmail) return 'tenant_email'
+    if (isPhone) return 'tenant_phone'
+    if (isTax) return 'tenant_tax_id'
+    return 'tenant_name'
+  }
+
+  // Campos genéricos (sin calificador de rol)
+  if (isTax) return 'holder_tax_id'
+  if (isEmail) return 'holder_email'
+  if (isPhone) return 'holder_phone'
   if (has('alicuota', 'coeficiente', 'coef', 'prorrateo', 'prorrata', 'porcentaje', 'porcentual') || h.includes('%') || h === 'porc') return 'prorata_percent'
   if (has('superficie', 'metros', 'm2', 'mts') || h === 'sup') return 'surface_m2'
   if (has('piso', 'planta', 'nivel')) return 'floor'
   if (has('tipo unidad', 'tipo de unidad', 'clase')) return 'unit_kind'
-  if (has('titular', 'propietario', 'dueno', 'responsable', 'apellido', 'nombre', 'vecino', 'ocupante')) return 'holder_name'
+  if (has('titular', 'responsable', 'apellido', 'nombre', 'vecino', 'ocupante')) return 'holder_name'
   if (has('unidad', 'lote', 'codigo', 'departamento', 'depto', 'manzana', 'parcela') || h === 'cod' || h === 'uf' || h === 'nro' || h === 'numero' || h === 'casa') return 'unit_code'
   if (h === 'tipo') return 'unit_kind'
 
@@ -217,13 +274,27 @@ function normalizeUnitKind(raw: unknown): string {
   return 'otro'
 }
 
+// No asumir 'propietario': si la columna no vino o no se reconoce, dejamos el
+// vínculo neutro 'otro'. El admin lo corrige después en la unidad.
 function normalizeHolderKind(raw: unknown): string {
   const s = String(raw ?? '').toLowerCase().trim()
-  if (!s) return 'propietario'
+  if (!s) return 'otro'
   for (const [k, v] of Object.entries(holderKindMap)) {
     if (s.includes(k)) return v
   }
-  return 'propietario'
+  return 'otro'
+}
+
+// Trata guiones/placeholders ("-", "–", "—", "n/a", "s/d", "sin datos", "null")
+// como celda vacía. Sin esto, una celda con "–" se importaba como un titular
+// fantasma llamado "–".
+function cleanCell(raw: unknown): string {
+  const s = String(raw ?? '').trim()
+  if (!s) return ''
+  if (/^[-–—.]+$/.test(s)) return ''
+  const low = s.toLowerCase().replace(/[\s./]/g, '')
+  if (['na', 'sd', 'sindatos', 'sininfo', 'null', 'none', 'nc'].includes(low)) return ''
+  return s
 }
 
 function normalizeProrata(raw: unknown): number | null {
@@ -263,8 +334,39 @@ export async function executeUnitsImport(input: {
     unitsCreated: 0,
     unitsUpdated: 0,
     holdersCreated: 0,
+    ownersCreated: 0,
+    tenantsCreated: 0,
     holdersSkipped: 0,
     skippedRows: [],
+  }
+
+  // Crea un holder (titular) de un vínculo dado, reemplazando los activos del
+  // mismo kind si replaceActiveHolders está habilitado. Devuelve true si insertó.
+  const createHolder = async (holder: {
+    unitId: string
+    fullName: string
+    holderKind: string
+    taxId: string
+    email: string
+    phone: string
+  }): Promise<boolean> => {
+    if (input.replaceActiveHolders) {
+      await closeActiveHoldersOfKindInPostgres({ unitId: holder.unitId, holderKind: holder.holderKind })
+    }
+    try {
+      await insertUnitHolderInPostgres({
+        unitId: holder.unitId,
+        fullName: holder.fullName,
+        holderKind: holder.holderKind,
+        taxId: holder.taxId || null,
+        email: holder.email || null,
+        phone: holder.phone || null,
+      })
+      return true
+    } catch {
+      result.holdersSkipped += 1
+      return false
+    }
   }
 
   const existingUnitsRaw = await listUnitsByPropertyMinimalFromPostgres(input.propertyId)
@@ -283,8 +385,7 @@ export async function executeUnitsImport(input: {
     }
 
     const kind = normalizeUnitKind(readField(row, 'unit_kind'))
-    const floorRaw = readField(row, 'floor')
-    const floor = floorRaw !== undefined ? String(floorRaw).trim() : null
+    const floor = cleanCell(readField(row, 'floor')) || null
     const surface = normalizeNumber(readField(row, 'surface_m2'))
     const prorata = normalizeProrata(readField(row, 'prorata_percent'))
 
@@ -316,31 +417,51 @@ export async function executeUnitsImport(input: {
       continue
     }
 
-    const rawHolderName = readField(row, 'holder_name')
-    const holderName = rawHolderName ? String(rawHolderName).trim() : ''
-    if (!holderName) continue
-
-    const holderKind = normalizeHolderKind(readField(row, 'holder_kind'))
-    const holderTaxId = readField(row, 'holder_tax_id')
-    const holderEmail = readField(row, 'holder_email')
-    const holderPhone = readField(row, 'holder_phone')
-
-    if (input.replaceActiveHolders) {
-      await closeActiveHoldersOfKindInPostgres({ unitId, holderKind })
+    // --- Propietario (columnas owner_*) → titular con vínculo 'propietario' ---
+    const ownerName = cleanCell(readField(row, 'owner_name'))
+    if (ownerName) {
+      const created = await createHolder({
+        unitId,
+        fullName: ownerName,
+        holderKind: 'propietario',
+        taxId: cleanCell(readField(row, 'owner_tax_id')),
+        email: cleanCell(readField(row, 'owner_email')),
+        phone: cleanCell(readField(row, 'owner_phone')),
+      })
+      if (created) result.ownersCreated += 1
     }
 
-    try {
-      await insertUnitHolderInPostgres({
+    // --- Inquilino (columnas tenant_*) → titular con vínculo 'inquilino' ---
+    const tenantName = cleanCell(readField(row, 'tenant_name'))
+    if (tenantName) {
+      const created = await createHolder({
+        unitId,
+        fullName: tenantName,
+        holderKind: 'inquilino',
+        taxId: cleanCell(readField(row, 'tenant_tax_id')),
+        email: cleanCell(readField(row, 'tenant_email')),
+        phone: cleanCell(readField(row, 'tenant_phone')),
+      })
+      if (created) result.tenantsCreated += 1
+    }
+
+    // --- Titular genérico (columnas holder_*) ---
+    // Sólo para planillas simples con UNA persona por unidad. Evitamos duplicar
+    // si coincide con el propietario o el inquilino ya creados.
+    const holderName = cleanCell(readField(row, 'holder_name'))
+    const holderDuplicatesOwner = holderName !== '' && holderName.toLowerCase() === ownerName.toLowerCase()
+    const holderDuplicatesTenant = holderName !== '' && holderName.toLowerCase() === tenantName.toLowerCase()
+
+    if (holderName && !holderDuplicatesOwner && !holderDuplicatesTenant) {
+      const created = await createHolder({
         unitId,
         fullName: holderName,
-        holderKind,
-        taxId: holderTaxId ? String(holderTaxId).trim() : null,
-        email: holderEmail ? String(holderEmail).trim() : null,
-        phone: holderPhone ? String(holderPhone).trim() : null,
+        holderKind: normalizeHolderKind(readField(row, 'holder_kind')),
+        taxId: cleanCell(readField(row, 'holder_tax_id')),
+        email: cleanCell(readField(row, 'holder_email')),
+        phone: cleanCell(readField(row, 'holder_phone')),
       })
-      result.holdersCreated += 1
-    } catch {
-      result.holdersSkipped += 1
+      if (created) result.holdersCreated += 1
     }
   }
 
