@@ -463,7 +463,10 @@ const createManagedPropertySchema = z.object({
     name: z.string().trim().min(2).max(120),
     legalName: z.string().trim().max(160).nullable().optional(),
     taxId: z.string().trim().max(32).nullable().optional(),
-    contactEmail: z.string().trim().email().max(160).nullable().optional(),
+    contactEmail: z.preprocess(
+      (v) => (typeof v === 'string' && v.trim() === '' ? null : v),
+      z.string().trim().email().max(160).nullable().optional(),
+    ),
     contactPhone: z.string().trim().max(40).nullable().optional(),
   }),
   managedProperty: z.object({
