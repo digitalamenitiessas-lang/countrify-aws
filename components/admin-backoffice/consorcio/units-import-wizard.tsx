@@ -43,6 +43,40 @@ type Props = {
 
 type Step = 'upload' | 'map' | 'preview' | 'done'
 
+// Muchas planillas reales traen un título o filas vacías/merge arriba de los
+// encabezados. Si tomamos la fila 1 a ciegas, las columnas salen como "__EMPTY"
+// y los headers reales caen como primera fila de datos. Detectamos la fila de
+// encabezados real: la que tiene más celdas no vacías + más palabras clave
+// reconocibles dentro de las primeras filas.
+const HEADER_KEYWORDS = [
+  'unidad', 'lote', 'codigo', 'depto', 'departamento', 'propietario', 'titular', 'inquilino',
+  'nombre', 'apellido', 'alicuota', 'coeficiente', 'prorrateo', 'piso', 'superficie', 'm2',
+  'dni', 'cuit', 'cuil', 'email', 'correo', 'telefono', 'celular', '%',
+]
+
+function normalizeForHeaderDetect(value: unknown): string {
+  return String(value ?? '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
+}
+
+function detectHeaderRow(aoa: unknown[][]): number {
+  let bestIndex = 0
+  let bestScore = -1
+  const limit = Math.min(aoa.length, 15)
+  for (let i = 0; i < limit; i++) {
+    const row = Array.isArray(aoa[i]) ? aoa[i] : []
+    const cells = row.map((c) => normalizeForHeaderDetect(c))
+    const nonEmpty = cells.filter(Boolean).length
+    if (nonEmpty < 2) continue
+    const keywordHits = cells.filter((c) => HEADER_KEYWORDS.some((k) => c.includes(k))).length
+    const score = keywordHits * 10 + nonEmpty
+    if (score > bestScore) {
+      bestScore = score
+      bestIndex = i
+    }
+  }
+  return bestIndex
+}
+
 const TARGET_OPTIONS: Array<{ value: ImportTargetField; label: string }> = [
   { value: 'ignore', label: '— Ignorar —' },
   { value: 'unit_code', label: 'Código de unidad' },
@@ -131,13 +165,43 @@ export function UnitsImportWizard({
       const firstSheetName = wb.SheetNames[0]
       if (!firstSheetName) throw new Error('El archivo no tiene hojas')
       const sheet = wb.Sheets[firstSheetName]
-      const json = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: '', raw: false })
-      if (json.length === 0) {
+      // Leemos como matriz cruda para poder detectar la fila de encabezados real
+      // (no asumimos que está en la fila 1: puede haber título/filas arriba).
+      const aoa = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: '', raw: false, blankrows: false })
+      if (aoa.length === 0) {
         toast.error('La hoja está vacía')
         return
       }
-      const h = Object.keys(json[0] ?? {})
+
+      const headerRowIdx = detectHeaderRow(aoa)
+      const rawHeaders = (aoa[headerRowIdx] ?? []).map((cell, i) => {
+        const name = String(cell ?? '').trim()
+        return name || `Columna ${i + 1}`
+      })
+      // Dedupe de nombres repetidos para no pisar columnas.
+      const seenHeaders = new Map<string, number>()
+      const h = rawHeaders.map((name) => {
+        const count = seenHeaders.get(name) ?? 0
+        seenHeaders.set(name, count + 1)
+        return count === 0 ? name : `${name} (${count + 1})`
+      })
       if (h.length === 0) throw new Error('No se detectaron columnas')
+
+      const dataRows = aoa
+        .slice(headerRowIdx + 1)
+        .filter((row) => Array.isArray(row) && row.some((c) => String(c ?? '').trim() !== ''))
+      const json = dataRows.map((row) => {
+        const record: Record<string, unknown> = {}
+        h.forEach((name, i) => {
+          record[name] = (row as unknown[])[i] ?? ''
+        })
+        return record
+      })
+      if (json.length === 0) {
+        toast.error('No se detectaron filas de datos debajo de los encabezados.')
+        return
+      }
+
       setFileName(file.name)
       setHeaders(h)
       setRows(json)
