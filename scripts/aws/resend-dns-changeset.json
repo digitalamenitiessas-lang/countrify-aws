@@ -1,0 +1,44 @@
+{
+  "Comment": "Resend domain verification for countrify.com.ar (DKIM + SPF MAIL FROM subdomain)",
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "resend._domainkey.countrify.com.ar.",
+        "Type": "TXT",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "\"p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDX4HjFY27YjiKWFupr2SuvnVo5fI8/6/mbvOhYBCeUEyjmm/kCtdbMj4NRmzgguaFRmTUPoAAcXXrxnRv54xu1zpLKQF0HwV+O9njmDpUCwdQLeNjzCgQA+5juHLvDZx63IdIfAjemAFewVTcviEKo5SjPM6ZP75VNdr2jX7LFnwIDAQAB\""
+          }
+        ]
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "send.countrify.com.ar.",
+        "Type": "MX",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "10 feedback-smtp.sa-east-1.amazonses.com"
+          }
+        ]
+      }
+    },
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "send.countrify.com.ar.",
+        "Type": "TXT",
+        "TTL": 300,
+        "ResourceRecords": [
+          {
+            "Value": "\"v=spf1 include:amazonses.com ~all\""
+          }
+        ]
+      }
+    }
+  ]
+}
