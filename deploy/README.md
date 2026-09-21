@@ -302,6 +302,44 @@ en runtime, con un `permission denied` en la cara del usuario.
 
 ---
 
+## 7b. Crear los buckets de MinIO
+
+Los archivos subidos (comprobantes de gastos, comprobantes de pago, logos de
+negocios, imagenes de promociones y del marketplace) viven en MinIO, dentro de
+este VPS. Hablan el protocolo S3, asi que si algun dia se migra a Cloudflare R2
+no se toca codigo: cambian `S3_ENDPOINT` y las credenciales.
+
+```bash
+docker compose -f deploy/docker-compose.yml --profile tools run --rm miniosetup
+```
+
+Crea los **dos** buckets, marca el publico como lectura anonima y el privado
+como cerrado, configura CORS y crea el usuario de la app con una policy acotada
+a esos dos buckets. Es idempotente.
+
+**Por que dos buckets y no uno:** en MinIO el acceso publico se configura por
+bucket, no por prefijo. Con un solo bucket marcado publico, los comprobantes de
+pago de los vecinos quedarian descargables por cualquiera que adivine la ruta.
+
+**El detalle que rompe a todo el mundo:** estos tres valores tienen que ser
+identicos al caracter, o cada subida desde el navegador falla con
+`SignatureDoesNotMatch` y el mensaje no dice por que:
+
+| Archivo | Variable | Valor |
+|---|---|---|
+| `.env` | `FILES_DOMAIN` | `archivos.countrify.com.ar` |
+| `.env.app` | `S3_ENDPOINT` | `https://archivos.countrify.com.ar` |
+| `.env.minio` | `MINIO_SERVER_URL` | `https://archivos.countrify.com.ar` |
+
+La firma de las URLs prefirmadas se calcula sobre ese host. Acordate de crear
+tambien el registro DNS de `archivos.` apuntando al VPS (paso 10).
+
+Verificacion:
+
+```bash
+docker compose -f deploy/docker-compose.yml exec minio mc ls local/
+```
+
 ## 8. Sembrar el super_admin
 
 No hay panel de AWS donde dar de alta el primer usuario: se crea con el script.
@@ -381,20 +419,45 @@ la parte que no se puede omitir — apuntando a `127.0.0.1:3000`.
 
 ## 10. DNS
 
-En el panel del registrador (o en Cloudflare):
+El DNS de countrify.com.ar vivia en Route53 y murio con la cuenta AWS: hoy el
+dominio devuelve SERVFAIL, no NXDOMAIN, porque la delegacion en nic.ar sigue
+apuntando a nameservers que ya no sirven la zona.
+
+**Paso cero, y el que mas tarda:** entrar a nic.ar con clave fiscal y reapuntar
+los nameservers. Lo mas simple es usar el DNS de Hostinger, que ya se paga con
+el VPS (panel > Zona DNS). Cloudflare tambien sirve, pero es una cuenta mas y su
+modo proxy hay que dejarlo apagado igual (ver abajo).
+
+Despues, los tres registros:
 
 | Tipo | Nombre | Valor |
 |---|---|---|
 | A | `@` | `<ip-del-vps>` |
 | A | `www` | `<ip-del-vps>` |
-| A | `archivos` | `<ip-del-vps>` — solo si se usa MinIO |
+| A | `archivos` | `<ip-del-vps>` |
 
-Con Cloudflare como DNS: poner los registros en **DNS only** (nube gris) hasta
-que Caddy haya emitido el certificado; despues se puede pasar a proxied.
+El de `archivos` **no es opcional**: es por donde el navegador sube y baja los
+comprobantes. Sin ese registro, MinIO no es alcanzable y todas las subidas
+fallan.
 
-Verificar antes de seguir: `dig +short countrify.com.ar`.
+Si se usa Cloudflare: dejar los registros en **DNS only** (nube gris). En modo
+proxied, el peer TCP de Caddy pasa a ser una IP del borde de Cloudflare y el
+`X-Forwarded-For` que ve `lib/rate-limit.ts` deja de ser el del visitante, con
+lo cual el limite de intentos de login se vuelve evadible.
 
-Los registros SPF/DKIM de Resend no se tocan: el mail no depende del VPS.
+Verificar antes de seguir:
+
+```bash
+dig +short countrify.com.ar && dig +short archivos.countrify.com.ar
+```
+
+La propagacion puede tardar horas. Conviene arrancar este paso antes que
+cualquier otro.
+
+Los registros SPF/DKIM de Resend van en la misma zona nueva: los valores estan
+guardados en `scripts/aws/resend-dns-changeset.json`. Sin ellos Resend no manda
+mails a nadie que no sea el dueño de la API key, y el alta de vecinos manda la
+contrasena temporal por mail.
 
 ---
 

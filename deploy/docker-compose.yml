@@ -129,6 +129,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio:
+        condition: service_healthy
     networks:
       - apps_net
     # node como PID 1 no reapea hijos zombie (sharp, next/font); init resuelve
@@ -160,12 +162,16 @@ services:
       COUNTRIFY_DOMAIN: ${COUNTRIFY_DOMAIN:-}
       COUNTRIFY_TLS_EMAIL: ${COUNTRIFY_TLS_EMAIL:-}
       COUNTRIFY_UPSTREAM: ${COUNTRIFY_UPSTREAM:-app:3000}
+      # Subdominio por el que el navegador alcanza MinIO. Tiene que ser
+      # identico a S3_ENDPOINT (.env.app) y a MINIO_SERVER_URL (.env.minio).
+      FILES_DOMAIN: ${FILES_DOMAIN:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
       - app
+      - minio
     networks:
       - apps_net
     mem_limit: 256m
@@ -173,18 +179,23 @@ services:
     logging: *default-logging
 
   # -------------------------------------------------------------------------
-  # MinIO (opcional). Solo si se elige guardar los archivos en el propio VPS en
-  # vez de Cloudflare R2 — ver docs/STORAGE.md, "Opcion B". Con R2 este servicio
-  # no se levanta nunca.
+  # MinIO: los archivos subidos viven en el disco de este VPS.
   #
-  #   docker compose -f deploy/docker-compose.yml --profile minio up -d
+  # Habla el mismo protocolo S3 que usa lib/storage/s3.ts, asi que si algun dia
+  # se migra a Cloudflare R2 no se toca codigo: cambian S3_ENDPOINT y las
+  # credenciales en .env.app, y se copian los objetos.
+  #
+  # El backup (deploy/backup.sh) se lleva la base Y estos archivos juntos: un
+  # pg_dump sin los comprobantes no sirve, porque las filas de
+  # iadmin_payment_claims y iadmin_expense_documents apuntan a objetos de aca.
   #
   # Los puertos van solo a loopback: MinIO se publica por el proxy, igual que la
   # app, con el hostname que despues va en S3_ENDPOINT.
   # -------------------------------------------------------------------------
   minio:
-    image: minio/minio:latest
-    profiles: ["minio"]
+    # Pineada: `latest` en un servicio que guarda archivos significa que un
+    # `docker compose pull` puede cambiarte la version de storage sin avisar.
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
     restart: unless-stopped
     # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD / MINIO_SERVER_URL /
     # MINIO_BROWSER_REDIRECT_URL
@@ -193,6 +204,9 @@ services:
     command: server /data --console-address ":9001"
     volumes:
       - minio_data:/data
+    # Publicados SOLO en loopback. Al navegador MinIO llega por Caddy
+    # (bloque {$FILES_DOMAIN}), nunca directo. El 9001 es la consola web de
+    # administracion: se alcanza con un tunel SSH, no se expone.
     ports:
       - "${MINIO_BIND:-127.0.0.1}:9000:9000"
       - "${MINIO_BIND:-127.0.0.1}:9001:9001"
@@ -206,6 +220,78 @@ services:
       - apps_net
     mem_limit: 768m
     cpus: 0.5
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # One-shot: crea los dos buckets y el usuario de la app en MinIO.
+  # No arranca solo (perfil tools). Idempotente: se puede correr de nuevo.
+  #
+  #   docker compose -f deploy/docker-compose.yml --profile tools run --rm miniosetup
+  #
+  # DOS buckets, no uno. En MinIO (y en R2) el acceso publico se configura POR
+  # BUCKET, no por prefijo. Con un solo bucket marcado publico, los comprobantes
+  # de gastos y los comprobantes de pago de los vecinos quedarian descargables
+  # por cualquiera que adivine la ruta. Son documentos contables de un
+  # consorcio.
+  #
+  # El usuario de la app NO usa las credenciales root ni la policy `readwrite`
+  # (que da acceso a TODOS los buckets del servidor, incluidos los que sume
+  # Citify). Se le crea una policy acotada a estos dos.
+  # -------------------------------------------------------------------------
+  miniosetup:
+    image: minio/mc:RELEASE.2025-04-16T18-13-26Z
+    profiles: ["tools"]
+    restart: "no"
+    env_file:
+      - .env.minio
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - apps_net
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+
+        mc mb --ignore-existing local/"$$S3_PUBLIC_BUCKET"
+        mc mb --ignore-existing local/"$$S3_PRIVATE_BUCKET"
+
+        # Publico: lectura anonima. Es donde viven logos, imagenes de promos y
+        # del marketplace, que el navegador pide directo por URL.
+        mc anonymous set download local/"$$S3_PUBLIC_BUCKET"
+        # Privado: explicitamente sin acceso anonimo. Se sirve solo por URL
+        # prefirmada de corta duracion (createPrivateS3DownloadUrl).
+        mc anonymous set none local/"$$S3_PRIVATE_BUCKET"
+
+        # CORS: los 4 uploads hacen PUT desde el navegador. Sin esto el
+        # preflight los mata y el error no dice por que.
+        cat > /tmp/cors.json <<CORS
+        [{"AllowedOrigin":["$$APP_ORIGIN"],"AllowedMethod":["PUT","GET","HEAD"],"AllowedHeader":["*"],"ExposeHeader":["ETag"],"MaxAgeSeconds":3600}]
+        CORS
+        mc cors set local/"$$S3_PUBLIC_BUCKET" /tmp/cors.json
+        mc cors set local/"$$S3_PRIVATE_BUCKET" /tmp/cors.json
+
+        # Policy acotada a estos dos buckets.
+        cat > /tmp/policy.json <<POLICY
+        {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Action": ["s3:GetObject","s3:PutObject","s3:DeleteObject","s3:ListBucket"],
+            "Resource": [
+              "arn:aws:s3:::$$S3_PUBLIC_BUCKET","arn:aws:s3:::$$S3_PUBLIC_BUCKET/*",
+              "arn:aws:s3:::$$S3_PRIVATE_BUCKET","arn:aws:s3:::$$S3_PRIVATE_BUCKET/*"
+            ]
+          }]
+        }
+        POLICY
+        mc admin user add local "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY" || true
+        mc admin policy create local countrify-app /tmp/policy.json || true
+        mc admin policy attach local countrify-app --user "$$S3_ACCESS_KEY_ID" || true
+
+        echo "OK: buckets $$S3_PUBLIC_BUCKET (publico) y $$S3_PRIVATE_BUCKET (privado) listos"
     logging: *default-logging
 
   # -------------------------------------------------------------------------

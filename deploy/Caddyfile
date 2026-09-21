@@ -8,6 +8,7 @@
 #
 # Variables (vienen del entorno del contenedor, definidas en deploy/.env):
 #   COUNTRIFY_DOMAIN       ej. countrify.com.ar
+#   FILES_DOMAIN           ej. archivos.countrify.com.ar (MinIO)
 #   COUNTRIFY_TLS_EMAIL    mail para los avisos de Let's Encrypt
 #   COUNTRIFY_UPSTREAM     default app:3000 (nombre del servicio en compose)
 # ---------------------------------------------------------------------------
@@ -79,24 +80,30 @@
 }
 
 # ---------------------------------------------------------------------------
-# Solo si los archivos se guardan en MinIO dentro del VPS (docs/STORAGE.md,
-# "Opcion B") en vez de Cloudflare R2. Descomentar y poner el dominio real:
-# tiene que ser EXACTAMENTE el mismo valor que S3_ENDPOINT y que
-# MINIO_SERVER_URL, porque la firma de las URLs prefirmadas se calcula sobre
-# ese host. Si no coinciden, cada PUT del navegador da SignatureDoesNotMatch.
+# MinIO: los archivos subidos (comprobantes de gastos y de pago, logos de
+# negocios, imagenes de promociones y del marketplace).
 #
-# Sin `request_body max_size` a proposito: por aca suben los comprobantes y los
-# adjuntos, y el limite util lo pone la propia app al prefirmar.
+# El dominio de aca tiene que ser EXACTAMENTE el mismo valor que S3_ENDPOINT en
+# .env.app y que MINIO_SERVER_URL en .env.minio. La firma de las URLs
+# prefirmadas se calcula sobre ese host: si los tres no coinciden al caracter,
+# cada PUT del navegador falla con SignatureDoesNotMatch y el mensaje no dice
+# por que. Es el error mas comun de MinIO detras de un proxy.
+#
+# `header_up Host {host}` es obligatorio: MinIO valida la firma contra el Host
+# que recibe. Si Caddy le manda el nombre interno del contenedor, no valida.
+#
+# Sin `request_body max_size` a proposito: por aca suben los comprobantes, y el
+# limite real lo pone la app al prefirmar (lib/storage/s3.ts, validateUpload).
 # ---------------------------------------------------------------------------
-# archivos.countrify.com.ar {
-# 	reverse_proxy minio:9000 {
-# 		header_up X-Forwarded-For {remote_host}
-# 		header_up X-Real-IP {remote_host}
-# 		header_up X-Forwarded-Proto {scheme}
-# 		header_up X-Forwarded-Host {host}
-# 	}
-# 	log {
-# 		output stdout
-# 		format console
-# 	}
-# }
+{$FILES_DOMAIN} {
+	reverse_proxy minio:9000 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+	log {
+		output stdout
+		format console
+	}
+}
