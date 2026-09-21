@@ -6,9 +6,10 @@ import { findMembership, requireIAdmin } from '@/lib/auth'
 import {
   buildExpenseDocumentObjectKey,
   createPrivateS3DownloadUrl,
-  deleteObjectFromS3,
-  uploadBufferToS3,
-} from '@/lib/aws/s3'
+  deletePrivateObject,
+  uploadPrivateBuffer,
+  validateUpload,
+} from '@/lib/storage/s3'
 import { canTransition } from '@/lib/iadmin/expense-status'
 import { assertSufficientFunds } from '@/lib/iadmin/cash-guards'
 import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
@@ -324,7 +325,19 @@ async function createExpenseImpl(input: CreateExpenseInput): Promise<{ id: strin
       const base64 = parsed.draftDocument.fileBase64.replace(/^data:[^;]+;base64,/, '')
       const bin = Buffer.from(base64, 'base64')
 
-      await uploadBufferToS3({
+      // Misma allowlist de extension / content-type / tamano que usan los
+      // presign de /api/uploads: este comprobante no pasa por ahi porque viaja
+      // en base64 dentro de la server action.
+      const invalid = validateUpload('expense-document', {
+        fileName: parsed.draftDocument.fileName,
+        contentType: parsed.draftDocument.mimeType,
+        sizeBytes: bin.length,
+      })
+      if (invalid) {
+        throw new Error(invalid.error)
+      }
+
+      await uploadPrivateBuffer({
         objectKey: storagePath,
         body: bin,
         contentType: parsed.draftDocument.mimeType,
@@ -348,7 +361,7 @@ async function createExpenseImpl(input: CreateExpenseInput): Promise<{ id: strin
           validatedBy: profile.id,
         })
       } catch {
-        await deleteObjectFromS3(storagePath).catch(() => undefined)
+        await deletePrivateObject(storagePath).catch(() => undefined)
       }
     } catch (docErr) {
       await insertIAdminAuditLogInPostgres({

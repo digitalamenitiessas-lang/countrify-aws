@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { ROLE_LABELS } from '@/lib/constants'
@@ -11,6 +11,7 @@ import {
   analyzeInitialOccupancyFile,
   confirmInitialOccupancyImport,
   createPlatformUser,
+  generateTemporaryPasswordAction,
 } from '@/app/superadmin/actions'
 import type {
   InitialOccupancyImportPreview,
@@ -119,15 +120,31 @@ export function UsuariosView({
     fullName: '',
     email: '',
     phone: '',
-    password: 'Countrify2026!',
+    password: '',
     role: 'vecino',
     buildingId: '',
     businessId: '',
   })
+
   const [importStep, setImportStep] = useState<ImportWizardStep>('building')
   const [selectedImportBuildingId, setSelectedImportBuildingId] = useState('')
   const [importFile, setImportFile] = useState<{ fileName: string; mimeType: string; fileBase64: string } | null>(null)
   const [importPreview, setImportPreview] = useState<InitialOccupancyImportPreview | null>(null)
+
+  // La contraseña temporal la genera el servidor y se muestra una sola vez, en
+  // este formulario. Nunca se genera en el browser ni queda una constante fija
+  // en el bundle.
+  async function refreshTempPassword() {
+    try {
+      const { password } = await generateTemporaryPasswordAction()
+      setUserDraft((current) => ({ ...current, password }))
+    } catch {
+      // Si falla, el campo queda vacio y se puede escribir una a mano.
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void refreshTempPassword() }, [])
 
   const isConsorcioAdminDraft = userDraft.role === 'consorcio_admin'
   const needsDirectBuilding = userDraft.role === 'vecino' || userDraft.role === 'propietario'
@@ -270,7 +287,8 @@ export function UsuariosView({
             ? 'Admin consorcio creado. Puedes asignarle countries desde el alta de consorcio.'
             : 'Usuario creado',
         )
-        setUserDraft({ fullName: '', email: '', phone: '', password: 'Countrify2026!', role: 'vecino', buildingId: '', businessId: '' })
+        setUserDraft({ fullName: '', email: '', phone: '', password: '', role: 'vecino', buildingId: '', businessId: '' })
+        void refreshTempPassword()
         router.refresh()
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Error')

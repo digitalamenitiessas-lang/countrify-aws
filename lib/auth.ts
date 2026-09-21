@@ -4,12 +4,7 @@ import {
   getIAdminRoleCapabilityOverridesFromPostgres,
   getIAdminRoleGrantsForProfileFromPostgres,
 } from '@/lib/db/iadmin-core'
-import {
-  findBusinessProfileByEmail,
-  findBusinessProfileById,
-  findProfileByEmail,
-  findProfileById,
-} from '@/lib/db/profiles'
+import { findProfileByEmail, findProfileById } from '@/lib/db/profiles'
 import { getAppSession } from '@/lib/auth/session'
 import type {
   IAdminAdministration,
@@ -38,15 +33,10 @@ function mapAdministration(row: any): IAdminAdministration {
 
 export async function getCurrentProfile(): Promise<Profile | null> {
   const appSession = await getAppSession()
-  if (appSession?.provider !== 'cognito') return null
+  if (appSession?.provider !== 'local') return null
 
-  if (appSession.role === 'negocio_admin') {
-    if (appSession.profileId) {
-      return (await findBusinessProfileById(appSession.profileId)) ?? null
-    }
-    return (await findBusinessProfileByEmail(appSession.email)) ?? null
-  }
-
+  // Todos los profiles (vecinos, admins y negocios) viven en la misma tabla
+  // countrify.profiles, asi que un solo lookup alcanza.
   if (appSession.profileId) {
     return (await findProfileById(appSession.profileId)) ?? null
   }

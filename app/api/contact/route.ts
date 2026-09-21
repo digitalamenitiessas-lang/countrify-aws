@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { sendEmail } from '@/lib/aws/ses'
+import { sendEmail } from '@/lib/email/provider'
 
 const CONTACT_DESTINATION = process.env.CONTACT_DESTINATION_EMAIL ?? 'digitalamenitiessas@gmail.com'
 

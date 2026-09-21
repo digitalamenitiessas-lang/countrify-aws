@@ -1,0 +1,260 @@
+# ---------------------------------------------------------------------------
+# Countrify — stack de produccion en el VPS.
+#
+#   docker compose -f deploy/docker-compose.yml up -d              app + postgres
+#   docker compose -f deploy/docker-compose.yml --profile caddy up -d   + HTTPS
+#
+# El VPS comparte maquina con los bots de Telegram. Todo lo de aca esta pensado
+# para no pisarlos:
+#   - nombre de proyecto propio (countrify) y red propia, sin tocar la default;
+#   - Postgres sin puerto publicado: solo se lo alcanza desde la red interna;
+#   - la app publica solo en loopback, asi que un proxy del host la puede tomar
+#     pero internet no la ve directo;
+#   - limites de memoria y de logs por servicio, para que un pico de Countrify
+#     no se lleve puesto lo que ya corria.
+#
+# Archivos de entorno (todos en deploy/, ninguno se commitea):
+#   .env         valores NO secretos que interpola compose (dominio, puerto,
+#                imagen). Compose lo lee solo por estar al lado de este archivo.
+#   .env.app     entorno del contenedor de la app (ver .env.example en la raiz)
+#   .env.db      POSTGRES_USER / POSTGRES_PASSWORD / POSTGRES_DB
+#   .env.dbsetup credenciales para crear roles y schema (perfil tools)
+#
+# Los secretos van SIEMPRE por env_file, nunca escritos en este yml.
+# ---------------------------------------------------------------------------
+
+name: countrify
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # -------------------------------------------------------------------------
+  # Postgres 17. Sin `ports:` a proposito: la unica forma de entrar es por la
+  # red de compose (o `docker compose exec`).
+  # -------------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    env_file:
+      - .env.db
+    environment:
+      # Ordenamiento con ICU, no con el locale del sistema.
+      #
+      # Las imagenes alpine corren sobre musl, que no implementa locales de
+      # verdad: initdb registra en_US.utf8 pero setlocale cae a "C", asi que
+      # todo ORDER BY sobre texto termina en orden de bytes. En castellano eso
+      # ordena mal cualquier nombre con enie o tilde (Nuniez despues de Zarate),
+      # y este sistema ordena por nombre casi en todas las pantallas: vecinos,
+      # proveedores, unidades, negocios.
+      #
+      # ICU no depende de la libc, asi que da el mismo orden en alpine, en
+      # Debian y en la Mac de desarrollo.
+      #
+      # OJO: initdb solo corre la PRIMERA vez, sobre un volumen vacio. Cambiar
+      # esto con la base ya creada NO hace nada; hay que recrearla.
+      # Verificar despues del primer arranque con:
+      #   select datcollate, datlocprovider, daticulocale from pg_database
+      #    where datname = current_database();
+      # datlocprovider tiene que devolver 'i'.
+      POSTGRES_INITDB_ARGS: "--locale-provider=icu --icu-locale=es-AR --locale=C.UTF-8 --encoding=UTF8"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - apps_net
+    # Tuning para una maquina de 8 GB COMPARTIDA con los bots: no nos
+    # quedamos con la mitad de la RAM como diria la receta clasica.
+    #   shared_buffers        512MB  ~6% de la RAM total, holgado para este volumen
+    #   effective_cache_size  1536MB  estimacion de lo que el SO puede cachear
+    #                                 para nosotros; no reserva nada
+    #   work_mem              8MB    por nodo de sort/hash. Con 50 conexiones y
+    #                                varios nodos por query el peor caso ya es
+    #                                alto; subirlo es la forma tipica de comerse
+    #                                la RAM sin darse cuenta
+    #   maintenance_work_mem  128MB  vacuum / create index
+    #   max_connections       50     la app abre 10 (DB_POOL_MAX) + migraciones
+    #                                + psql manual. 50 sobra y acota el peor caso
+    command:
+      - postgres
+      - -c
+      - shared_buffers=512MB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=8MB
+      - -c
+      - maintenance_work_mem=128MB
+      - -c
+      - max_connections=50
+      - -c
+      - random_page_cost=1.1
+      - -c
+      - log_min_duration_statement=2000
+    healthcheck:
+      # $$ para que la expansion la haga la shell del contenedor y no compose:
+      # POSTGRES_USER/DB viven en .env.db, compose no los conoce.
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-countrify}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    mem_limit: 1536m
+    cpus: 1.0
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # App Next (standalone). No corre migraciones al arrancar: eso es un paso
+  # manual y explicito (ver deploy/README.md).
+  # -------------------------------------------------------------------------
+  app:
+    image: ${COUNTRIFY_IMAGE:-countrify:local}
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        # Unica variable que queda congelada en la imagen (es de cliente).
+        # Si esta vacia, el Dockerfile la descarta y la imagen sale sin push.
+        NEXT_PUBLIC_VAPID_PUBLIC_KEY: ${NEXT_PUBLIC_VAPID_PUBLIC_KEY:-}
+    restart: unless-stopped
+    env_file:
+      - .env.app
+    # Solo loopback del host. Con Caddy (perfil caddy) esto no hace falta, pero
+    # no molesta y sirve para curl local y para el caso "ya hay un proxy en el
+    # host que toma 80/443".
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - apps_net
+    # node como PID 1 no reapea hijos zombie (sharp, next/font); init resuelve
+    # eso y ademas hace que docker stop termine limpio.
+    init: true
+    mem_limit: 1536m
+    cpus: 1.5
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # Caddy (opcional). Solo arranca con `--profile caddy`, para el caso en que
+  # los puertos 80/443 del VPS esten libres. Si ya hay un proxy del host, no
+  # se levanta y se apunta ese proxy a 127.0.0.1:${APP_PORT}.
+  # -------------------------------------------------------------------------
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["caddy"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      # No son secretos: el dominio y el mail de Let's Encrypt salen de
+      # deploy/.env por interpolacion. Van con default vacio y no con la forma
+      # `:?error`, porque compose interpola el archivo ENTERO aunque el perfil
+      # caddy no se levante: un `:?` aca haria fallar hasta un `up -d` sin
+      # proxy. Si falta el dominio, Caddy no arranca y lo dice.
+      COUNTRIFY_DOMAIN: ${COUNTRIFY_DOMAIN:-}
+      COUNTRIFY_TLS_EMAIL: ${COUNTRIFY_TLS_EMAIL:-}
+      COUNTRIFY_UPSTREAM: ${COUNTRIFY_UPSTREAM:-app:3000}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+    networks:
+      - apps_net
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # MinIO (opcional). Solo si se elige guardar los archivos en el propio VPS en
+  # vez de Cloudflare R2 — ver docs/STORAGE.md, "Opcion B". Con R2 este servicio
+  # no se levanta nunca.
+  #
+  #   docker compose -f deploy/docker-compose.yml --profile minio up -d
+  #
+  # Los puertos van solo a loopback: MinIO se publica por el proxy, igual que la
+  # app, con el hostname que despues va en S3_ENDPOINT.
+  # -------------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    restart: unless-stopped
+    # MINIO_ROOT_USER / MINIO_ROOT_PASSWORD / MINIO_SERVER_URL /
+    # MINIO_BROWSER_REDIRECT_URL
+    env_file:
+      - .env.minio
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "${MINIO_BIND:-127.0.0.1}:9000:9000"
+      - "${MINIO_BIND:-127.0.0.1}:9001:9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - apps_net
+    mem_limit: 768m
+    cpus: 0.5
+    logging: *default-logging
+
+  # -------------------------------------------------------------------------
+  # One-shot: crea roles + schema + migraciones sobre una base vacia.
+  # No arranca nunca solo (perfil tools). Uso:
+  #   docker compose -f deploy/docker-compose.yml --profile tools run --rm dbsetup
+  #
+  # Corre scripts/db/setup.sh desde el repo montado, contra el Postgres de
+  # arriba. Es la unica forma comoda de hacerlo sin publicar el puerto 5432.
+  # -------------------------------------------------------------------------
+  dbsetup:
+    image: postgres:17-alpine
+    profiles: ["tools"]
+    restart: "no"
+    env_file:
+      - .env.dbsetup
+    volumes:
+      - ..:/repo:ro
+    working_dir: /repo
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - apps_net
+    # setup.sh es bash (usa [[ ]] y expansiones de bash). La variante alpine de
+    # postgres suele traerlo por el entrypoint, pero no dependemos de eso.
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        command -v bash >/dev/null 2>&1 || apk add --no-cache bash >/dev/null;
+        exec bash scripts/db/setup.sh ${COUNTRIFY_DB:-countrify}
+    logging: *default-logging
+
+networks:
+  # Compartida con Citify cuando se sume: Caddy tiene que alcanzar a los dos
+  # contenedores de app por nombre.
+  apps_net:
+    name: apps_net
+
+volumes:
+  # Nombres NEUTROS a proposito: este VPS va a alojar tambien a Citify, y
+  # Postgres/Caddy/MinIO son infraestructura compartida entre los dos productos.
+  # Renombrar un volumen que ya tiene datos adentro es dump + restore de una base
+  # en produccion, asi que el nombre se elige ahora y no despues.
+  pgdata:
+    name: apps_pgdata
+  minio_data:
+    name: apps_minio_data
+  caddy_data:
+    name: apps_caddy_data
+  caddy_config:
+    name: apps_caddy_config

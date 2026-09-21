@@ -54,8 +54,8 @@ export async function buildVecinoContext(userId: string): Promise<VecinoContext 
       `
         select p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
                b.name as business_name, p.building_id
-        from public.promotions p
-        left join public.businesses b on b.id = p.business_id
+        from countrify.promotions p
+        left join countrify.businesses b on b.id = p.business_id
         where p.is_active = true and p.expiration_date >= $1::date
         order by p.created_at desc
         limit 20
@@ -106,8 +106,8 @@ export async function buildVecinoContext(userId: string): Promise<VecinoContext 
     const r = await pgQuery<{ id: string; title: string; discount: string; business_name: string | null }>(
       `
         select p.id, p.title, p.discount, b.name as business_name
-        from public.promotions p
-        left join public.businesses b on b.id = p.business_id
+        from countrify.promotions p
+        left join countrify.businesses b on b.id = p.business_id
         where p.id = any($1::uuid[])
       `,
       [Array.from(savedIds)],
@@ -283,7 +283,7 @@ export async function buildNegocioContext(userId: string): Promise<NegocioContex
   const [business, promotions, vecinoCountResult] = await Promise.all([
     businessId
       ? pgQuery<{ name: string; category: string; description: string | null }>(
-          `select name, category, description from public.businesses where id = $1 limit 1`,
+          `select name, category, description from countrify.businesses where id = $1 limit 1`,
           [businessId],
         ).then((r) => r.rows[0] ?? null)
       : Promise.resolve(null),
@@ -298,7 +298,7 @@ export async function buildNegocioContext(userId: string): Promise<NegocioContex
           `
             select p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
                    coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
-            from public.promotions p
+            from countrify.promotions p
             where p.business_id = $1
             order by p.created_at desc
           `,
@@ -358,7 +358,7 @@ export async function buildSuperAdminContext(): Promise<SuperAdminContext | null
       `select id, name, address, total_units from countrify.buildings order by name`,
     ).then((r) => r.rows),
     pgQuery<{ id: string; name: string; category: string }>(
-      `select id, name, category from public.businesses order by name`,
+      `select id, name, category from countrify.businesses order by name`,
     ).then((r) => r.rows),
     pgQuery<{
       id: string
@@ -374,8 +374,8 @@ export async function buildSuperAdminContext(): Promise<SuperAdminContext | null
         select p.id, p.title, p.discount, p.expiration_date::text as expiration_date, p.is_active,
                p.business_id, b.name as business_name,
                coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
-        from public.promotions p
-        left join public.businesses b on b.id = p.business_id
+        from countrify.promotions p
+        left join countrify.businesses b on b.id = p.business_id
         order by p.created_at desc
         limit 20
       `,

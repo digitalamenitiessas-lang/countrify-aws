@@ -1,0 +1,73 @@
+# ---------------------------------------------------------------------------
+# Countrify — crontab del VPS.
+#
+# Reemplaza lo que en AWS eran Lambda + EventBridge (infra/lambda/cron-reminders/).
+#
+# Instalacion (como el usuario que puede correr docker, normalmente el mismo
+# que levanta el compose):
+#
+#   crontab -e        # y pegar las lineas de abajo, ajustando rutas
+#   crontab -l        # verificar
+#
+# Reemplazar antes de usar:
+#   /srv/countrify            ruta del repo clonado en el VPS
+#   https://countrify.com.ar  dominio real
+#
+# HORARIOS: cron usa la zona del sistema. Un VPS recien instalado esta en UTC,
+# asi que las horas de abajo estan en UTC con su equivalente ARG al lado
+# (ARG = UTC-3, sin horario de verano). Verificar con `timedatectl`.
+# Si el server esta en America/Argentina/Buenos_Aires, usar los horarios ARG
+# directamente. La otra opcion es descomentar CRON_TZ (cron de Debian/Ubuntu y
+# cronie lo soportan; otros no, y lo ignoran EN SILENCIO — verificar).
+#
+# CRON_TZ=America/Argentina/Buenos_Aires
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Cron manda un mail con la salida cuando un comando escribe algo o falla.
+# Sin MAILTO (y sin MTA) los errores se pierden: si no hay mail configurado,
+# redirigir a un archivo y mirarlo, o mandar el aviso a un bot de Telegram.
+MAILTO=admin@countrify.com.ar
+
+# ---------------------------------------------------------------------------
+# El secreto NO va en esta linea: el comando completo de un cron se ve en
+# `ps aux` mientras corre. Va en un archivo de config de curl, con permisos
+# 600, que el operador crea una vez:
+#
+#   sudo mkdir -p /etc/countrify
+#   sudo tee /etc/countrify/cron.curlrc >/dev/null <<'EOF'
+#   header = "Authorization: Bearer PEGAR_AQUI_EL_CRON_SECRET"
+#   header = "X-Cron-Secret: PEGAR_AQUI_EL_CRON_SECRET"
+#   EOF
+#   sudo chown $USER /etc/countrify/cron.curlrc
+#   sudo chmod 600 /etc/countrify/cron.curlrc
+#
+# Los dos headers son el MISMO valor (CRON_SECRET de .env.app): generate-reminders
+# lee `Authorization: Bearer`, materialize-late-fees lee `X-Cron-Secret`. Mandar
+# los dos siempre simplifica y no molesta a ninguno de los dos endpoints.
+#
+# curl -f  -> exit != 0 si el HTTP no es 2xx, para que cron avise
+# curl -sS -> silencioso salvo errores (si no, cron manda mail todos los dias)
+# ---------------------------------------------------------------------------
+
+# 09:00 UTC = 06:00 ARG — recargos por mora.
+# Va antes que los recordatorios para que los mails salgan con los importes ya
+# materializados.
+0 9 * * * curl -fsS --max-time 600 -K /etc/countrify/cron.curlrc -X POST https://countrify.com.ar/api/cron/materialize-late-fees
+
+# 12:00 UTC = 09:00 ARG — recordatorios de expensas.
+# Mismo horario que tenia el EventBridge schedule `countrify-cron-reminders-daily`
+# (cron(0 12 * * ? *)). El endpoint declara maxDuration 300, de ahi --max-time 600.
+0 12 * * * curl -fsS --max-time 600 -K /etc/countrify/cron.curlrc -H 'Content-Type: application/json' -d '{}' -X POST https://countrify.com.ar/api/cron/generate-reminders
+
+# 06:00 UTC = 03:00 ARG — backup de base + archivos.
+# El script sale con codigo != 0 si el dump salio vacio o corrupto, asi que el
+# mail de cron es el aviso de "el backup de anoche fallo".
+0 6 * * * /srv/countrify/deploy/backup.sh
+
+# Opcional, domingos 05:00 UTC = 02:00 ARG: limpiar imagenes viejas de docker.
+# OJO: `docker image prune -a` borraria tambien imagenes de los bots que no
+# esten corriendo. Por eso va filtrado y comentado; habilitarlo solo despues de
+# confirmar que no hay nada mas usando esas imagenes.
+# 0 5 * * 0 docker image prune -f --filter 'until=720h' --filter 'label=com.docker.compose.project=countrify'

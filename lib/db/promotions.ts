@@ -36,8 +36,8 @@ function basePromotionSelect() {
       p.image_path,
       p.is_active,
       count(pr.id)::int as usage_count
-    from public.promotions p
-    left join public.businesses b on b.id = p.business_id
+    from countrify.promotions p
+    left join countrify.businesses b on b.id = p.business_id
     left join countrify.promotion_redemptions pr on pr.promotion_id = p.id
   `
 }

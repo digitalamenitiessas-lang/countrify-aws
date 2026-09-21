@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createPrivateS3DownloadUrl } from '@/lib/aws/s3'
+import { createPrivateS3DownloadUrl } from '@/lib/storage/s3'
 import { getCurrentProfile, getIAdminContext } from '@/lib/auth'
 import { pgQuery } from '@/lib/db/postgres'
 

@@ -48,6 +48,7 @@ export function ReportPaymentForm({ unitId, unitCode, liquidationItemId, suggest
           unitId,
           fileName: file.name,
           contentType: file.type || 'application/octet-stream',
+          sizeBytes: file.size,
         }),
       })
       if (!presign.ok) {

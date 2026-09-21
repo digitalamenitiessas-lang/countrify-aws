@@ -36,3 +36,16 @@ countrify-aws-progress.md
 node_modules
 .next/
 .DS_Store
+
+# Credenciales sueltas (nunca commitear) — agregado 2026-09-21
+credentials-aws.*
+config-.aws.*
+env.local-*.txt
+*-credentials.txt
+*-credentials.*
+aws-credentials*
+*.pem
+*.key
+
+# Artefacto incremental de tsc. Cambia en cada build y no aporta nada al repo.
+tsconfig.tsbuildinfo

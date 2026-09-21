@@ -1,5 +1,6 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import * as XLSX from 'xlsx'
 import { z } from 'zod'
@@ -17,9 +18,8 @@ import type {
   UserRole,
 } from '@/lib/types'
 import { inferInitialOccupancyMapping } from '@/lib/superadmin/initial-occupancy-ai'
-import { adminCreateCognitoUser } from '@/lib/aws/cognito'
+import { generateTempPassword, hashPassword } from '@/lib/auth/password'
 import {
-  findBusinessProfileByEmail,
   findProfileByEmail,
   upsertBusinessProfile,
   upsertProfile,
@@ -371,22 +371,15 @@ async function findOrCreatePlatformProfile(input: {
   const normalizedEmail = input.email.toLowerCase()
   const isBusiness = input.role === 'negocio_admin'
 
-  // Negocios viven en countrify.profiles (compartido con Citify) y en el
-  // business pool de Cognito. El resto en countrify.profiles + pool primary.
-  const existing = isBusiness
-    ? await findBusinessProfileByEmail(normalizedEmail)
-    : await findProfileByEmail(normalizedEmail)
+  // Todos los profiles (negocios incluidos) viven en countrify.profiles, asi
+  // que el lookup por email es uno solo. Si el email ya existe se reutiliza el
+  // profile y no se le toca la contraseña.
+  const existing = await findProfileByEmail(normalizedEmail)
 
-  let profileId = existing?.id
-  if (!profileId) {
-    const { sub } = await adminCreateCognitoUser({
-      email: normalizedEmail,
-      password: input.password,
-      fullName: input.fullName,
-      source: isBusiness ? 'business' : 'primary',
-    })
-    profileId = sub
-  }
+  // El id lo generamos nosotros (antes era el 'sub' del pool de Cognito). Tiene
+  // que ser un UUID de 36 chars — lib/db/postgres.ts lo valida por regex.
+  const profileId = existing?.id ?? randomUUID()
+  const passwordHashOnCreate = existing ? null : await hashPassword(input.password)
 
   const avatarText = avatarFromName(input.fullName)
 
@@ -399,6 +392,7 @@ async function findOrCreatePlatformProfile(input: {
       phone: input.phone,
       businessId: input.businessId ?? null,
       passwordMustChangeOnCreate: true,
+      passwordHashOnCreate,
     })
   } else {
     await upsertProfile({
@@ -411,10 +405,21 @@ async function findOrCreatePlatformProfile(input: {
       buildingId: input.buildingId,
       businessId: input.businessId ?? null,
       passwordMustChangeOnCreate: true,
+      passwordHashOnCreate,
     })
   }
 
   return profileId
+}
+
+// Genera una contraseña temporal en el servidor. La usan los formularios de
+// alta del backoffice para prellenar el campo "Password temporal": antes habia
+// una constante fija hardcodeada en el bundle del cliente, igual para todos los
+// usuarios creados. Solo se muestra una vez, al admin que esta creando la
+// cuenta.
+export async function generateTemporaryPasswordAction(): Promise<{ password: string }> {
+  await requireProfile(['super_admin', 'consorcio_admin'])
+  return { password: generateTempPassword() }
 }
 
 export async function createPlatformUser(input: z.input<typeof createPlatformUserSchema>) {
@@ -754,7 +759,10 @@ export async function confirmInitialOccupancyImport(
         fullName: row.fullName,
         email: row.email,
         phone: row.phone || null,
-        password: 'Citify2026!',
+        // Una contraseña distinta por vecino. No se muestra en ningun lado: el
+        // vecino entra por "olvidé mi contraseña". Antes todos los importados
+        // quedaban con la misma clave conocida.
+        password: generateTempPassword(),
         role: relationshipRole(row.relationshipType),
         buildingId: parsed.buildingId,
       })
@@ -832,7 +840,9 @@ export async function bulkImportInitialOccupancy(input: z.input<typeof bulkImpor
       const fullName = row.full_name || row.fullName || row.nombre
       const email = row.email
       const phone = row.phone || row.telefono || null
-      const password = row.password || 'Citify2026!'
+      // Si el CSV no trae password, una temporal distinta por fila (nunca una
+      // constante compartida).
+      const password = row.password || generateTempPassword()
       const floor = row.floor || row.piso || null
       const kind = row.unit_kind || row.unitKind || 'departamento'
 

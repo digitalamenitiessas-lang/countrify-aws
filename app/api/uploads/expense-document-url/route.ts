@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createExpenseDocumentUploadUrl } from '@/lib/aws/s3'
+import { createExpenseDocumentUploadUrl, validateUpload } from '@/lib/storage/s3'
 import { getCurrentProfile, getIAdminContext } from '@/lib/auth'
 import { getExpenseStatusInfoFromPostgres } from '@/lib/db/iadmin-writes'
 
@@ -7,6 +7,7 @@ type UploadRequestBody = {
   expenseId?: string
   fileName?: string
   contentType?: string
+  sizeBytes?: number
 }
 
 export async function POST(req: NextRequest) {
@@ -48,11 +49,24 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Validacion server-side: extension, content-type y tamano. Antes esto
+    // vivia solo en el cliente y la URL prefirmada servia para subir cualquier
+    // cosa, de cualquier peso.
+    const invalid = validateUpload('expense-document', {
+      fileName: body.fileName,
+      contentType: body.contentType,
+      sizeBytes: body.sizeBytes,
+    })
+    if (invalid) {
+      return NextResponse.json({ error: invalid.error }, { status: invalid.status })
+    }
+
     const result = await createExpenseDocumentUploadUrl({
       administrationId: expense.administration_id,
       expenseId: body.expenseId,
       fileName: body.fileName,
       contentType: body.contentType || 'application/octet-stream',
+      sizeBytes: body.sizeBytes,
     })
 
     return NextResponse.json(result)

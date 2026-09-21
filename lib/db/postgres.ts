@@ -40,6 +40,11 @@ function getPoolConfig(): PoolConfig {
     database: getRequiredEnv('DB_NAME'),
     user: getRequiredEnv('DB_USER'),
     password: getRequiredEnv('DB_PASSWORD'),
+    // Casi todas las queries califican el schema a mano, pero businesses y
+    // promotions vivian en el schema public de Citify y ahora estan en
+    // countrify. El search_path es el cinturon para que una query sin calificar
+    // resuelva a countrify en vez de fallar con "relation does not exist".
+    options: `-c search_path=${process.env.DB_SCHEMA ?? 'countrify'},public`,
     ssl: process.env.DB_SSL === 'disable' ? false : { rejectUnauthorized: false },
     max: Number(process.env.DB_POOL_MAX ?? 10),
     idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS ?? 30_000),

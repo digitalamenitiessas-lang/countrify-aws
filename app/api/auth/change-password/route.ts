@@ -1,15 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCurrentProfile } from '@/lib/auth'
-import { adminSetCognitoPassword, signInWithCognitoPassword, signInWithBusinessPool } from '@/lib/aws/cognito'
-import { clearPasswordMustChange, findBusinessProfileById, findProfileById } from '@/lib/db/profiles'
+import { hashPassword, validatePasswordPolicy, verifyPassword } from '@/lib/auth/password'
+import { clearPasswordMustChange, findProfileCredentialsById, setProfilePasswordHash } from '@/lib/db/profiles'
 import { getClientIp, rateLimitResponse } from '@/lib/rate-limit'
-
-function validatePassword(pwd: string): string | null {
-  if (typeof pwd !== 'string') return 'Contraseña inválida.'
-  if (pwd.length < 8) return 'La contraseña debe tener al menos 8 caracteres.'
-  if (pwd.length > 72) return 'La contraseña es demasiado larga.'
-  return null
-}
 
 export async function POST(req: NextRequest) {
   const profile = await getCurrentProfile()
@@ -41,23 +34,20 @@ export async function POST(req: NextRequest) {
   if (!newPassword) {
     return NextResponse.json({ error: 'Falta la nueva contraseña.' }, { status: 400 })
   }
-  const validationError = validatePassword(newPassword)
+  const validationError = validatePasswordPolicy(newPassword)
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 })
   }
 
-  // Re-leemos el profile completo para tener passwordMustChange actualizado.
-  // Negocios viven en countrify.profiles, todos los demas en countrify.profiles.
-  const isBusiness = profile.role === 'negocio_admin'
-  const fullProfile = isBusiness
-    ? await findBusinessProfileById(profile.id)
-    : await findProfileById(profile.id)
+  // Re-leemos el profile completo (con su hash) para tener passwordMustChange
+  // actualizado y poder verificar la contraseña actual.
+  const credentials = await findProfileCredentialsById(profile.id)
 
-  if (!fullProfile) {
+  if (!credentials) {
     return NextResponse.json({ error: 'Perfil no encontrado.' }, { status: 404 })
   }
 
-  const source: 'primary' | 'business' = isBusiness ? 'business' : 'primary'
+  const fullProfile = credentials.profile
 
   // En cambio in-session (no first-login) exigimos re-autenticacion con la
   // contraseña actual para no permitir que una sesion secuestrada cambie la
@@ -69,19 +59,11 @@ export async function POST(req: NextRequest) {
         { status: 400 },
       )
     }
-    try {
-      if (source === 'business') {
-        await signInWithBusinessPool(fullProfile.email, currentPassword)
-      } else {
-        await signInWithCognitoPassword(fullProfile.email, currentPassword)
-      }
-    } catch (error: unknown) {
-      const name = (error as { name?: string } | null)?.name
-      const message =
-        name === 'NotAuthorizedException'
-          ? 'La contraseña actual no es correcta.'
-          : 'No pudimos verificar tu contraseña actual. Probá de nuevo.'
-      return NextResponse.json({ error: message }, { status: 401 })
+    const currentOk = credentials.passwordHash
+      ? await verifyPassword(credentials.passwordHash, currentPassword)
+      : false
+    if (!currentOk) {
+      return NextResponse.json({ error: 'La contraseña actual no es correcta.' }, { status: 401 })
     }
   }
 
@@ -93,12 +75,15 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    await adminSetCognitoPassword({ email: fullProfile.email, newPassword, source })
+    await setProfilePasswordHash(fullProfile.id, await hashPassword(newPassword))
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : 'Error de auth'
+    console.error(
+      '[auth/change-password] no se pudo guardar el hash:',
+      error instanceof Error ? error.message : error,
+    )
     return NextResponse.json(
-      { error: `No pudimos actualizar la contraseña: ${msg}` },
-      { status: 502 },
+      { error: 'No pudimos actualizar la contraseña. Probá de nuevo.' },
+      { status: 500 },
     )
   }
 

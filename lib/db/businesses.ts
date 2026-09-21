@@ -30,7 +30,7 @@ const BUSINESS_SELECT_COLUMNS = `
 
 export async function getBusinessByIdFromPostgres(id: string): Promise<BusinessRow | null> {
   const result = await pgQuery<BusinessRow>(
-    `select ${BUSINESS_SELECT_COLUMNS} from public.businesses where id = $1 limit 1`,
+    `select ${BUSINESS_SELECT_COLUMNS} from countrify.businesses where id = $1 limit 1`,
     [id],
   )
 
@@ -39,7 +39,7 @@ export async function getBusinessByIdFromPostgres(id: string): Promise<BusinessR
 
 export async function getAllBusinessesFromPostgres(): Promise<BusinessRow[]> {
   const result = await pgQuery<BusinessRow>(
-    `select ${BUSINESS_SELECT_COLUMNS} from public.businesses order by name asc`,
+    `select ${BUSINESS_SELECT_COLUMNS} from countrify.businesses order by name asc`,
   )
 
   return result.rows

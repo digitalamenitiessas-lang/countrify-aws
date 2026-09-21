@@ -1,9 +1,10 @@
 'use server'
 
+import { randomUUID } from 'node:crypto'
 import { revalidatePath } from 'next/cache'
 import { z } from 'zod'
 import { requireProfile } from '@/lib/auth'
-import { adminCreateCognitoUser } from '@/lib/aws/cognito'
+import { generateTempPassword, hashPassword } from '@/lib/auth/password'
 import { findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
 import {
   countActiveAdditionalNeighborsInPostgres,
@@ -61,15 +62,9 @@ export async function createHouseholdNeighbor(input: z.input<typeof householdNei
     }
   }
 
-  let profileId = existingProfile?.id
-  if (!profileId) {
-    const { sub } = await adminCreateCognitoUser({
-      email: normalizedEmail,
-      password: parsed.password,
-      fullName: parsed.fullName,
-    })
-    profileId = sub
-  }
+  // El id lo generamos nosotros (antes era el 'sub' del pool de Cognito). Tiene
+  // que ser un UUID de 36 chars — lib/db/postgres.ts lo valida por regex.
+  const profileId = existingProfile?.id ?? randomUUID()
 
   await upsertProfile({
     id: profileId,
@@ -80,6 +75,9 @@ export async function createHouseholdNeighbor(input: z.input<typeof householdNei
     role: 'vecino',
     buildingId: principal.building_id,
     businessId: null,
+    // Solo se honra en el INSERT: si el familiar ya tenia cuenta, se vincula
+    // sin tocarle la contraseña.
+    passwordHashOnCreate: existingProfile ? null : await hashPassword(parsed.password),
   })
 
   const existingMembership = await findUnitProfileMembershipFromPostgres({
@@ -100,6 +98,14 @@ export async function createHouseholdNeighbor(input: z.input<typeof householdNei
 
   revalidatePath('/usuario')
   return { profileId }
+}
+
+// Genera la contraseña temporal del familiar en el servidor. El formulario del
+// dashboard la prellena con esto: antes era una constante fija hardcodeada en
+// el bundle del cliente, igual para todos.
+export async function generateHouseholdTemporaryPassword(): Promise<{ password: string }> {
+  await requireProfile(['vecino'])
+  return { password: generateTempPassword() }
 }
 
 const markReadSchema = z.object({

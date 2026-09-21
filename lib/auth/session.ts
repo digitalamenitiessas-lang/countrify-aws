@@ -5,7 +5,9 @@ const SESSION_COOKIE_NAME = 'countrify_session'
 const SESSION_TTL_SECONDS = 60 * 60 * 12
 
 export type AppSessionPayload = {
-  provider: 'cognito'
+  // 'local': las credenciales las valida la propia app contra el hash argon2
+  // guardado en countrify.profiles (antes las validaba Cognito).
+  provider: 'local'
   email: string
   profileId: string | null
   role: string | null

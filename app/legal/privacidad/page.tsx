@@ -121,7 +121,7 @@ export default function PrivacidadPage() {
       <h2>7. Seguridad</h2>
       <ul>
         <li>Conexiones siempre por HTTPS / TLS.</li>
-        <li>Contraseñas guardadas con hashing en AWS Cognito (nunca en texto plano).</li>
+        <li>Contraseñas guardadas con hashing Argon2id en nuestra base (nunca en texto plano).</li>
         <li>Acceso a la base de datos restringido a redes privadas (RDS en VPC privada).</li>
         <li>Audit log de envíos de email y operaciones críticas.</li>
         <li>Rate limit en endpoints de autenticación para mitigar brute force.</li>

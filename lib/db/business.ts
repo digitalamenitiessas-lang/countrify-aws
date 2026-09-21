@@ -49,7 +49,7 @@ export async function updateBusinessFieldsInPostgres(
   if (cols.length === 0) return
   values.push(businessId)
   await pgQuery(
-    `update public.businesses set ${cols.join(', ')} where id = $${values.length}`,
+    `update countrify.businesses set ${cols.join(', ')} where id = $${values.length}`,
     values,
   )
 }
@@ -69,7 +69,7 @@ export async function upsertPromotionInPostgres(input: {
   if (input.mode === 'update') {
     await pgQuery(
       `
-        update public.promotions
+        update countrify.promotions
         set title = $1,
             description = $2,
             discount = $3,
@@ -96,7 +96,7 @@ export async function upsertPromotionInPostgres(input: {
   }
   await pgQuery(
     `
-      insert into public.promotions (
+      insert into countrify.promotions (
         id, business_id, title, description, discount, category,
         expiration_date, building_id, image_path, is_active
       )
@@ -120,7 +120,7 @@ export async function deletePromotionInPostgres(input: {
   promotionId: string
   businessId: string
 }): Promise<void> {
-  await pgQuery(`delete from public.promotions where id = $1 and business_id = $2`, [
+  await pgQuery(`delete from countrify.promotions where id = $1 and business_id = $2`, [
     input.promotionId,
     input.businessId,
   ])
@@ -211,7 +211,7 @@ export async function getPromotionForRedemptionFromPostgres(promotionId: string)
     expiration_date: string | null
     building_id: string | null
   }>(
-    `select id, business_id, title, is_active, expiration_date::text as expiration_date, building_id from public.promotions where id = $1 limit 1`,
+    `select id, business_id, title, is_active, expiration_date::text as expiration_date, building_id from countrify.promotions where id = $1 limit 1`,
     [promotionId],
   )
   return result.rows[0] ?? null
@@ -219,7 +219,7 @@ export async function getPromotionForRedemptionFromPostgres(promotionId: string)
 
 export async function getBusinessNameFromPostgres(businessId: string): Promise<string | null> {
   const result = await pgQuery<{ name: string }>(
-    `select name from public.businesses where id = $1 limit 1`,
+    `select name from countrify.businesses where id = $1 limit 1`,
     [businessId],
   )
   return result.rows[0]?.name ?? null

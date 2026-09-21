@@ -7,14 +7,15 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
-    "db:apply-rds-schema": "node scripts/apply-rds-schema.js"
+    "db:seed-superadmin": "node scripts/db/seed-superadmin.mjs",
+    "db:build-schema": "node scripts/db/build-schema.mjs",
+    "db:migrate": "node scripts/db/migrate.mjs"
   },
   "dependencies": {
-    "@aws-sdk/client-cognito-identity-provider": "^3.1045.0",
     "@aws-sdk/client-s3": "^3.1045.0",
-    "@aws-sdk/client-sesv2": "^3.1048.0",
     "@aws-sdk/s3-request-presigner": "^3.1045.0",
     "@hookform/resolvers": "^3.9.1",
+    "@node-rs/argon2": "^2.2.1",
     "@radix-ui/react-accordion": "1.2.12",
     "@radix-ui/react-alert-dialog": "1.1.15",
     "@radix-ui/react-aspect-ratio": "1.1.8",

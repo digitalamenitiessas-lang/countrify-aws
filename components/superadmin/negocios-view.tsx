@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { toast } from 'sonner'
 import { BusinessesList } from '@/components/superadmin/shared'
-import { createBusinessWithAdmin } from '@/app/superadmin/actions'
+import { createBusinessWithAdmin, generateTemporaryPasswordAction } from '@/app/superadmin/actions'
 import type { SuperAdminBusinessDetail } from '@/lib/types'
 
 export function NegociosView({ businesses }: { businesses: SuperAdminBusinessDetail[] }) {
@@ -18,8 +18,23 @@ export function NegociosView({ businesses }: { businesses: SuperAdminBusinessDet
     adminFullName: '',
     adminEmail: '',
     adminPhone: '',
-    adminPassword: 'Countrify2026!',
+    adminPassword: '',
   })
+
+  // La contraseña temporal la genera el servidor y se muestra una sola vez, en
+  // este formulario. Nunca se genera en el browser ni queda una constante fija
+  // en el bundle.
+  async function refreshAdminPassword() {
+    try {
+      const { password } = await generateTemporaryPasswordAction()
+      setBusinessDraft((current) => ({ ...current, adminPassword: password }))
+    } catch {
+      // Si falla, el campo queda vacio y se puede escribir una a mano.
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void refreshAdminPassword() }, [])
 
   function submitBusiness(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -44,8 +59,9 @@ export function NegociosView({ businesses }: { businesses: SuperAdminBusinessDet
           adminFullName: '',
           adminEmail: '',
           adminPhone: '',
-          adminPassword: 'Countrify2026!',
+          adminPassword: '',
         })
+        void refreshAdminPassword()
         router.refresh()
       } catch (error) {
         toast.error(error instanceof Error ? error.message : 'Error')
