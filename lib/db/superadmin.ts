@@ -45,8 +45,8 @@ export async function listAllPromotionsForSuperadminFromPostgres(): Promise<
         p.source_promotion_id,
         b.name as business_name,
         coalesce((select count(*)::int from countrify.promotion_redemptions r where r.promotion_id = p.id), 0) as redemption_count
-      from countrify.promotions p
-      left join countrify.businesses b on b.id = p.business_id
+      from shared.promotions p
+      left join shared.businesses b on b.id = p.business_id
       order by p.created_at desc
     `,
   )
@@ -122,7 +122,7 @@ export async function listRedemptionsForBusinessFromPostgres(businessId: string)
         b.id as profile_building_id, b.name as profile_building_name,
         pr.title as promotion_title, pr.discount as promotion_discount
       from countrify.promotion_redemptions r
-      inner join countrify.promotions pr on pr.id = r.promotion_id
+      inner join shared.promotions pr on pr.id = r.promotion_id
       left join countrify.profiles p on p.id = r.profile_id
       left join countrify.buildings b on b.id = p.building_id
       where pr.business_id = $1
@@ -144,7 +144,7 @@ export async function listAllBuildingsFromPostgres(): Promise<any[]> {
 }
 
 export async function listAllBusinessesFromPostgres(): Promise<any[]> {
-  const result = await pgQuery(`select * from countrify.businesses order by name asc`)
+  const result = await pgQuery(`select * from shared.businesses order by name asc`)
   return result.rows
 }
 
@@ -276,7 +276,7 @@ export async function createBusinessInPostgres(input: {
 }): Promise<{ id: string }> {
   const result = await pgQuery<{ id: string }>(
     `
-      insert into countrify.businesses (name, category, description, address)
+      insert into shared.businesses (name, category, description, address)
       values ($1, $2, $3, $4)
       returning id
     `,
@@ -466,7 +466,7 @@ export async function setBusinessOwnerInPostgres(
   ownerProfileId: string,
 ): Promise<void> {
   await pgQuery(
-    `update countrify.businesses set owner_profile_id = $1 where id = $2`,
+    `update shared.businesses set owner_profile_id = $1 where id = $2`,
     [ownerProfileId, businessId],
   )
 }

@@ -7,7 +7,7 @@
 -- Countrify schema bootstrap.
 -- This file was generated from generated-rds-schema.sql by adapting it to
 -- create all Countrify tables in the `countrify` schema (instead of `public`).
--- The shared tables countrify.businesses and countrify.promotions are NOT created
+-- The shared tables shared.businesses and shared.promotions are NOT created
 -- here: they live in the Citify (public) schema and Countrify only references
 -- them via FKs.
 
@@ -74,47 +74,52 @@ create table if not exists countrify.profiles (
 );
 
 -- ---------------------------------------------------------------------------
--- businesses / promotions
+-- schema shared: businesses y promotions
 --
--- Vivian en el schema public de la base de Citify y se compartian entre los dos
--- productos. Countrify ahora es standalone, asi que viven aca. El DDL sale de
--- scripts/generated-rds-schema.sql:79-120 con los prefijos reescritos.
+-- Estas dos tablas son COMPARTIDAS entre Countrify y Citify: una misma fila por
+-- negocio y por promocion se muestra en los dos productos. En AWS vivian en el
+-- schema public de la base de Citify, y Countrify las leia de ahi; eso ataba un
+-- producto al schema del otro y generaba los problemas de ownership que
+-- documenta scripts/migrate-prod.sh.
+--
+-- Ahora viven en un schema propio. Las dos apps corren contra la MISMA base de
+-- Postgres, cada una con su schema (countrify / citify) mas este. No pueden ser
+-- dos bases separadas: Postgres no soporta claves foraneas entre bases, y
+-- countrify.profiles, promotion_redemptions, saved_promotions y
+-- promotion_redemption_tokens referencian estas tablas.
+--
+-- DDL original en citify-aws/scripts/generated-rds-schema.sql:79-121.
 -- ---------------------------------------------------------------------------
 
-create table if not exists countrify.businesses (
+create schema if not exists shared;
+
+create table if not exists shared.businesses (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   category text not null,
   description text not null default '',
-  owner_profile_id uuid references countrify.profiles(id) on delete set null,
+  -- SIN clave foranea, a proposito. La fila es compartida pero cada producto
+  -- tiene su propia tabla de profiles, asi que este id apunta a los perfiles
+  -- del producto que dio de alta el negocio. Un FK solo podria apuntar a uno de
+  -- los dos y romperia el alta desde el otro. La integridad de esta columna la
+  -- sostiene la app (lib/db/superadmin.ts la escribe).
+  owner_profile_id uuid,
+  address text,
+  latitude double precision,
+  longitude double precision,
   logo_path text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
--- El FK va por ALTER porque profiles y businesses se referencian mutuamente.
-do $$
-begin
-  if not exists (
-    select 1
-    from information_schema.table_constraints
-    where table_schema = 'countrify'
-      and table_name = 'profiles'
-      and constraint_name = 'profiles_business_id_fkey'
-  ) then
-    alter table countrify.profiles
-      add constraint profiles_business_id_fkey
-      foreign key (business_id)
-      references countrify.businesses(id)
-      on delete set null;
-  end if;
-end
-$$;
-
-create table if not exists countrify.promotions (
+create table if not exists shared.promotions (
   id uuid primary key default gen_random_uuid(),
-  business_id uuid not null references countrify.businesses(id) on delete cascade,
-  building_id uuid references countrify.buildings(id) on delete set null,
+  business_id uuid not null references shared.businesses(id) on delete cascade,
+  -- SIN clave foranea, por el mismo motivo que owner_profile_id: los buildings
+  -- son de cada producto (countries en Countrify, edificios en Citify).
+  -- Nullable significa "promocion para todos"; con valor, la app de ese
+  -- producto la limita a ese building.
+  building_id uuid,
   title text not null,
   description text not null,
   discount text not null,
@@ -122,13 +127,41 @@ create table if not exists countrify.promotions (
   expiration_date date not null,
   image_path text,
   is_active boolean not null default true,
+  published_month date not null default date_trunc('month', now())::date,
+  source_promotion_id uuid references shared.promotions(id) on delete set null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+create index if not exists promotions_business_month_idx
+  on shared.promotions (business_id, published_month desc);
+create index if not exists promotions_source_idx
+  on shared.promotions (source_promotion_id);
+
+-- El FK de profiles hacia businesses va por ALTER porque la tabla profiles se
+-- crea antes. Cruza de schema, que dentro de la misma base es perfectamente
+-- valido.
+do $$
+begin
+  if not exists (
+    select 1
+    from information_schema.table_constraints
+    where table_schema = 'countrify'
+      and table_name = 'profiles'
+      and constraint_name = 'profiles_business_id_fkey'
+  ) then
+    alter table countrify.profiles
+      add constraint profiles_business_id_fkey
+      foreign key (business_id)
+      references shared.businesses(id)
+      on delete set null;
+  end if;
+end
+$$;
 
 
--- [countrify] dropped statement (create table countrify.businesses/promotions)
+
+-- [countrify] dropped statement (create table shared.businesses/promotions)
 
 
 do $$
@@ -143,7 +176,7 @@ begin
     alter table countrify.profiles
       add constraint profiles_business_id_fkey
       foreign key (business_id)
-      references countrify.businesses(id)
+      references shared.businesses(id)
       on delete set null;
   end if;
 end
@@ -151,7 +184,7 @@ $$;
 
 
 
--- [countrify] dropped statement (create table countrify.businesses/promotions)
+-- [countrify] dropped statement (create table shared.businesses/promotions)
 
 
 create table if not exists countrify.marketplace_items (
@@ -172,7 +205,7 @@ create table if not exists countrify.marketplace_items (
 
 create table if not exists countrify.saved_promotions (
   profile_id uuid not null references countrify.profiles(id) on delete cascade,
-  promotion_id uuid not null references countrify.promotions(id) on delete cascade,
+  promotion_id uuid not null references shared.promotions(id) on delete cascade,
   created_at timestamptz not null default now(),
   primary key (profile_id, promotion_id)
 );
@@ -182,7 +215,7 @@ create table if not exists countrify.saved_promotions (
 create table if not exists countrify.promotion_redemptions (
   id uuid primary key default gen_random_uuid(),
   profile_id uuid not null references countrify.profiles(id) on delete cascade,
-  promotion_id uuid not null references countrify.promotions(id) on delete cascade,
+  promotion_id uuid not null references shared.promotions(id) on delete cascade,
   status text not null default 'redeemed',
   redeemed_at timestamptz not null default now(),
   created_at timestamptz not null default now()
@@ -209,14 +242,14 @@ create trigger set_profiles_updated_at before update on countrify.profiles for e
 
 
 
--- [countrify] dropped statement (trigger on countrify.businesses/promotions)
+-- [countrify] dropped statement (trigger on shared.businesses/promotions)
 
--- [countrify] dropped statement (trigger on countrify.businesses/promotions)
+-- [countrify] dropped statement (trigger on shared.businesses/promotions)
 
 
--- [countrify] dropped statement (trigger on countrify.businesses/promotions)
+-- [countrify] dropped statement (trigger on shared.businesses/promotions)
 
--- [countrify] dropped statement (trigger on countrify.businesses/promotions)
+-- [countrify] dropped statement (trigger on shared.businesses/promotions)
 
 
 drop trigger if exists set_marketplace_updated_at on countrify.marketplace_items;
@@ -2537,7 +2570,7 @@ create index if not exists iadmin_bank_movements_date_idx
 -- Migration: 20260420_locations.sql
 
 -- Add location fields to businesses
--- [countrify] dropped statement (alter table countrify.businesses/promotions)
+-- [countrify] dropped statement (alter table shared.businesses/promotions)
 
 
 -- Add location fields to buildings
@@ -2553,20 +2586,20 @@ ALTER TABLE IF EXISTS countrify.buildings
 
 -- Migration: 20260420_promotion_qr_monthly.sql
 
--- [countrify] dropped statement (alter table countrify.businesses/promotions)
+-- [countrify] dropped statement (alter table shared.businesses/promotions)
 
 
--- [countrify] dropped statement (update on countrify.promotions - shared table owned by Citify)
+-- [countrify] dropped statement (update on shared.promotions - shared table owned by Citify)
 
--- [countrify] dropped statement (alter table countrify.businesses/promotions)
-
-
--- [countrify] dropped statement (alter table countrify.businesses/promotions)
+-- [countrify] dropped statement (alter table shared.businesses/promotions)
 
 
--- [countrify] dropped statement (create index on countrify.businesses/promotions)
+-- [countrify] dropped statement (alter table shared.businesses/promotions)
 
--- [countrify] dropped statement (create index on countrify.businesses/promotions)
+
+-- [countrify] dropped statement (create index on shared.businesses/promotions)
+
+-- [countrify] dropped statement (create index on shared.businesses/promotions)
 
 
 delete from countrify.promotion_redemptions pr
@@ -2591,13 +2624,13 @@ create unique index if not exists promotion_redemptions_profile_promotion_uidx
 
 create table if not exists countrify.promotion_redemption_tokens (
   id uuid primary key default gen_random_uuid(),
-  promotion_id uuid not null references countrify.promotions(id) on delete cascade,
+  promotion_id uuid not null references shared.promotions(id) on delete cascade,
   profile_id uuid not null references countrify.profiles(id) on delete cascade,
   token text not null unique,
   status text not null default 'pending' check (status in ('pending', 'redeemed', 'expired', 'cancelled')),
   expires_at timestamptz not null,
   redeemed_at timestamptz,
-  redeemed_by_business_id uuid references countrify.businesses(id) on delete set null,
+  redeemed_by_business_id uuid references shared.businesses(id) on delete set null,
   created_at timestamptz not null default now()
 );
 
@@ -2641,8 +2674,8 @@ set search_path = countrify, public
 as $create_redemption_token$
 declare
   current_profile countrify.profiles%rowtype;
-  promotion_row countrify.promotions%rowtype;
-  business_row countrify.businesses%rowtype;
+  promotion_row shared.promotions%rowtype;
+  business_row shared.businesses%rowtype;
   existing_token countrify.promotion_redemption_tokens%rowtype;
   created_token countrify.promotion_redemption_tokens%rowtype;
 begin
@@ -2662,7 +2695,7 @@ begin
 
   select *
   into promotion_row
-  from countrify.promotions p
+  from shared.promotions p
   where p.id = target_promotion_id
   limit 1;
 
@@ -2706,7 +2739,7 @@ begin
 
   select *
   into business_row
-  from countrify.businesses b
+  from shared.businesses b
   where b.id = promotion_row.business_id
   limit 1;
 
@@ -2821,7 +2854,7 @@ begin
 
   select p.business_id, p.title, p.is_active, p.expiration_date
   into v_promotion_business_id, v_promotion_title, v_promotion_is_active, v_promotion_expiration_date
-  from countrify.promotions p
+  from shared.promotions p
   where p.id = v_token_promotion_id
   limit 1;
 
@@ -3636,8 +3669,8 @@ set search_path = countrify, public
 as $create_redemption_token$
 declare
   current_profile countrify.profiles%rowtype;
-  promotion_row countrify.promotions%rowtype;
-  business_row countrify.businesses%rowtype;
+  promotion_row shared.promotions%rowtype;
+  business_row shared.businesses%rowtype;
   existing_token countrify.promotion_redemption_tokens%rowtype;
   created_token countrify.promotion_redemption_tokens%rowtype;
   v_current_building_id uuid;
@@ -3660,7 +3693,7 @@ begin
 
   select *
   into promotion_row
-  from countrify.promotions p
+  from shared.promotions p
   where p.id = target_promotion_id
   limit 1;
 
@@ -3704,7 +3737,7 @@ begin
 
   select *
   into business_row
-  from countrify.businesses b
+  from shared.businesses b
   where b.id = promotion_row.business_id
   limit 1;
 
@@ -4025,8 +4058,8 @@ set search_path = countrify, public
 as $create_redemption_token$
 declare
   current_profile countrify.profiles%rowtype;
-  promotion_row countrify.promotions%rowtype;
-  business_row countrify.businesses%rowtype;
+  promotion_row shared.promotions%rowtype;
+  business_row shared.businesses%rowtype;
   existing_token countrify.promotion_redemption_tokens%rowtype;
   created_token countrify.promotion_redemption_tokens%rowtype;
   v_current_building_id uuid;
@@ -4049,7 +4082,7 @@ begin
 
   select *
   into promotion_row
-  from countrify.promotions p
+  from shared.promotions p
   where p.id = target_promotion_id
   limit 1;
 
@@ -4093,7 +4126,7 @@ begin
 
   select *
   into business_row
-  from countrify.businesses b
+  from shared.businesses b
   where b.id = promotion_row.business_id
   limit 1;
 

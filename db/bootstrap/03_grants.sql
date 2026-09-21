@@ -5,6 +5,15 @@
 
 grant usage on schema countrify to countrify_app;
 
+-- El schema shared lo comparten Countrify y Citify: los dos roles de runtime
+-- necesitan leer y escribir ahi (un negocio se da de alta desde cualquiera de
+-- los dos y tiene que aparecer en el otro).
+grant usage on schema shared to countrify_app;
+grant select, insert, update, delete on all tables   in schema shared to countrify_app;
+grant usage, select                 on all sequences in schema shared to countrify_app;
+alter default privileges in schema shared
+  grant select, insert, update, delete on tables to countrify_app;
+
 grant select, insert, update, delete on all tables    in schema countrify to countrify_app;
 grant usage, select                 on all sequences  in schema countrify to countrify_app;
 grant execute                       on all functions  in schema countrify to countrify_app;

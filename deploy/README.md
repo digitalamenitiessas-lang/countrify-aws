@@ -193,6 +193,11 @@ Con eso la app levanta, pero varias cosas quedan apagadas hasta cargar el resto
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=<openssl rand -base64 24>
 POSTGRES_DB=countrify
+
+# UNA sola base para los dos productos. businesses y promotions se comparten
+# entre Countrify y Citify (misma fila), y Postgres no soporta claves foraneas
+# entre bases distintas. Cada producto tiene su schema, mas el schema `shared`.
+# Ver deploy/MULTI-PRODUCTO.md antes de sumar Citify.
 ```
 
 **`deploy/.env.dbsetup`** — solo para el paso 7 (crear roles y schema):

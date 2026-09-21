@@ -176,25 +176,73 @@ $fn$;
 // ---------------------------------------------------------------------------
 const SHARED_TABLES = `
 -- ---------------------------------------------------------------------------
--- businesses / promotions
+-- schema shared: businesses y promotions
 --
--- Vivian en el schema public de la base de Citify y se compartian entre los dos
--- productos. Countrify ahora es standalone, asi que viven aca. El DDL sale de
--- scripts/generated-rds-schema.sql:79-120 con los prefijos reescritos.
+-- Estas dos tablas son COMPARTIDAS entre Countrify y Citify: una misma fila por
+-- negocio y por promocion se muestra en los dos productos. En AWS vivian en el
+-- schema public de la base de Citify, y Countrify las leia de ahi; eso ataba un
+-- producto al schema del otro y generaba los problemas de ownership que
+-- documenta scripts/migrate-prod.sh.
+--
+-- Ahora viven en un schema propio. Las dos apps corren contra la MISMA base de
+-- Postgres, cada una con su schema (countrify / citify) mas este. No pueden ser
+-- dos bases separadas: Postgres no soporta claves foraneas entre bases, y
+-- countrify.profiles, promotion_redemptions, saved_promotions y
+-- promotion_redemption_tokens referencian estas tablas.
+--
+-- DDL original en citify-aws/scripts/generated-rds-schema.sql:79-121.
 -- ---------------------------------------------------------------------------
 
-create table if not exists countrify.businesses (
+create schema if not exists shared;
+
+create table if not exists shared.businesses (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   category text not null,
   description text not null default '',
-  owner_profile_id uuid references countrify.profiles(id) on delete set null,
+  -- SIN clave foranea, a proposito. La fila es compartida pero cada producto
+  -- tiene su propia tabla de profiles, asi que este id apunta a los perfiles
+  -- del producto que dio de alta el negocio. Un FK solo podria apuntar a uno de
+  -- los dos y romperia el alta desde el otro. La integridad de esta columna la
+  -- sostiene la app (lib/db/superadmin.ts la escribe).
+  owner_profile_id uuid,
+  address text,
+  latitude double precision,
+  longitude double precision,
   logo_path text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
--- El FK va por ALTER porque profiles y businesses se referencian mutuamente.
+create table if not exists shared.promotions (
+  id uuid primary key default gen_random_uuid(),
+  business_id uuid not null references shared.businesses(id) on delete cascade,
+  -- SIN clave foranea, por el mismo motivo que owner_profile_id: los buildings
+  -- son de cada producto (countries en Countrify, edificios en Citify).
+  -- Nullable significa "promocion para todos"; con valor, la app de ese
+  -- producto la limita a ese building.
+  building_id uuid,
+  title text not null,
+  description text not null,
+  discount text not null,
+  category text not null,
+  expiration_date date not null,
+  image_path text,
+  is_active boolean not null default true,
+  published_month date not null default date_trunc('month', now())::date,
+  source_promotion_id uuid references shared.promotions(id) on delete set null,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists promotions_business_month_idx
+  on shared.promotions (business_id, published_month desc);
+create index if not exists promotions_source_idx
+  on shared.promotions (source_promotion_id);
+
+-- El FK de profiles hacia businesses va por ALTER porque la tabla profiles se
+-- crea antes. Cruza de schema, que dentro de la misma base es perfectamente
+-- valido.
 do $$
 begin
   if not exists (
@@ -207,26 +255,11 @@ begin
     alter table countrify.profiles
       add constraint profiles_business_id_fkey
       foreign key (business_id)
-      references countrify.businesses(id)
+      references shared.businesses(id)
       on delete set null;
   end if;
 end
 $$;
-
-create table if not exists countrify.promotions (
-  id uuid primary key default gen_random_uuid(),
-  business_id uuid not null references countrify.businesses(id) on delete cascade,
-  building_id uuid references countrify.buildings(id) on delete set null,
-  title text not null,
-  description text not null,
-  discount text not null,
-  category text not null,
-  expiration_date date not null,
-  image_path text,
-  is_active boolean not null default true,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
 `.trim()
 
 // ---------------------------------------------------------------------------
@@ -264,6 +297,15 @@ const GRANTS = `
 
 grant usage on schema countrify to countrify_app;
 
+-- El schema shared lo comparten Countrify y Citify: los dos roles de runtime
+-- necesitan leer y escribir ahi (un negocio se da de alta desde cualquiera de
+-- los dos y tiene que aparecer en el otro).
+grant usage on schema shared to countrify_app;
+grant select, insert, update, delete on all tables   in schema shared to countrify_app;
+grant usage, select                 on all sequences in schema shared to countrify_app;
+alter default privileges in schema shared
+  grant select, insert, update, delete on tables to countrify_app;
+
 grant select, insert, update, delete on all tables    in schema countrify to countrify_app;
 grant usage, select                 on all sequences  in schema countrify to countrify_app;
 grant execute                       on all functions  in schema countrify to countrify_app;
@@ -295,8 +337,8 @@ function transform(sql, { label }) {
     }
     kept.push(
       stmt
-        .replace(/\bpublic\.businesses\b/g, 'countrify.businesses')
-        .replace(/\bpublic\.promotions\b/g, 'countrify.promotions')
+        .replace(/\bpublic\.businesses\b/g, 'shared.businesses')
+        .replace(/\bpublic\.promotions\b/g, 'shared.promotions')
         .replace(/id uuid primary key references auth\.users\(id\) on delete cascade/g, 'id uuid primary key')
         .replace(/\bauth\.uid\(\)/g, 'countrify.uid()')
         .replace(/\s*,\s*(anon|authenticated|service_role)\b/g, ''),

@@ -216,7 +216,7 @@ const BUSINESS_PROFILE_SELECT = `
     and business_id is not null
 `
 
-// Upserta un profile de negocio. countrify.businesses.owner_profile_id apunta a
+// Upserta un profile de negocio. shared.businesses.owner_profile_id apunta a
 // countrify.profiles(id), asi que el row vive ahi como cualquier otro.
 export async function upsertBusinessProfile(input: {
   id: string

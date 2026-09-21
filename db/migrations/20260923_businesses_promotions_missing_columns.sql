@@ -1,6 +1,11 @@
 -- ---------------------------------------------------------------------------
 -- Columnas de businesses y promotions que la app usa y que faltaban.
 --
+-- NOTA: businesses y promotions viven en el schema `shared` (ver
+-- scripts/db/build-schema.mjs). Sobre una base creada desde cero estas columnas
+-- ya vienen en el DDL base y esta migracion es no-op: se conserva porque una
+-- base que ya exista si las necesita.
+--
 -- Contexto: businesses y promotions vivian en el schema public de la base de
 -- Citify. Al traerlas al schema countrify, el DDL se saco de
 -- scripts/generated-rds-schema.sql, que es un volcado CONGELADO de Citify del
@@ -26,7 +31,7 @@
 -- direccion y completarla despues, y el mapa del backoffice tolera un negocio
 -- sin coordenadas (no lo dibuja).
 -- ---------------------------------------------------------------------------
-alter table countrify.businesses
+alter table shared.businesses
   add column if not exists address text,
   add column if not exists latitude double precision,
   add column if not exists longitude double precision;
@@ -43,26 +48,26 @@ alter table countrify.businesses
 -- (ninguna hoy, pero esta migracion tiene que ser correcta tambien sobre una
 -- base con datos) tomen un valor valido.
 -- ---------------------------------------------------------------------------
-alter table countrify.promotions
+alter table shared.promotions
   add column if not exists published_month date,
   add column if not exists source_promotion_id uuid
-    references countrify.promotions(id) on delete set null;
+    references shared.promotions(id) on delete set null;
 
-update countrify.promotions
+update shared.promotions
    set published_month = date_trunc('month', coalesce(created_at, now()))::date
  where published_month is null;
 
-alter table countrify.promotions
+alter table shared.promotions
   alter column published_month set default date_trunc('month', now())::date;
 
-alter table countrify.promotions
+alter table shared.promotions
   alter column published_month set not null;
 
 create index if not exists promotions_business_month_idx
-  on countrify.promotions (business_id, published_month desc);
+  on shared.promotions (business_id, published_month desc);
 
 create index if not exists promotions_source_idx
-  on countrify.promotions (source_promotion_id);
+  on shared.promotions (source_promotion_id);
 
 -- ---------------------------------------------------------------------------
 -- Un vecino no puede canjear dos veces la misma promocion.

@@ -60,7 +60,7 @@ export async function sendWelcomeEmail(input: SendWelcomeInput): Promise<void> {
     let businessName: string | null = null
     if (input.businessId) {
       const res = await pgQuery<{ name: string }>(
-        `select name from countrify.businesses where id = $1 limit 1`,
+        `select name from shared.businesses where id = $1 limit 1`,
         [input.businessId],
       )
       businessName = res.rows[0]?.name ?? null
