@@ -1,6 +1,17 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  // output: 'standalone' se saco al desplegar.
+  //
+  // Era para la imagen de Docker. El VPS resulto tener 1 nucleo y ya correr 12
+  // servicios con un patron propio (apps Next como servicio de systemd detras
+  // del Caddy nativo), asi que Countrify se despliega igual que las demas y
+  // arranca con `next start`.
+  //
+  // Con standalone activo, `next start` imprime en cada arranque
+  // «"next start" does not work with "output: standalone"». Empiricamente
+  // funciona —rutas, chunks y assets sirven bien— pero dejar un aviso que dice
+  // que algo no funciona, cuando funciona, hace perder tiempo al que opere esto
+  // dentro de seis meses. Si algun dia se vuelve a Docker, se repone.
   // typescript.ignoreBuildErrors estaba en true y se saco a proposito.
   //
   // Este proyecto no tiene un solo test. Con el chequeo de tipos ademas
