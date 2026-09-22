@@ -1,0 +1,16 @@
+# Archivos de entorno del deploy. El runbook manda crearlos DENTRO del repo
+# clonado en el VPS, asi que sin esto un `git add .` en el servidor sube todos
+# los secretos de produccion: passwords de Postgres, APP_SESSION_SECRET, claves
+# de storage, VAPID y la API key de Resend.
+.env
+.env.*
+!.env.example
+!*.env.example
+!.env.*.example
+backup.env
+*.env
+
+# Datos y certificados que Caddy o los backups puedan dejar caer aca.
+caddy/data/
+caddy/config/
+backups/

@@ -1,7 +1,7 @@
 import { Resend } from 'resend'
-import type { SendEmailInput } from '@/lib/aws/ses'
+import type { SendEmailInput } from '@/lib/email/types'
 
-// Adaptador de Resend. Implementa la MISMA firma que lib/aws/ses.ts#sendEmail
+// Adaptador de Resend. Unico transporte real de email del sistema.
 // para que lib/email/send.ts (sendNotificationEmail) no tenga que cambiar.
 //
 // Variables de entorno:

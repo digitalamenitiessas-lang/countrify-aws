@@ -1,0 +1,109 @@
+# ---------------------------------------------------------------------------
+# Countrify — reverse proxy con HTTPS automatico (Let's Encrypt).
+#
+# Solo se usa si los puertos 80/443 del VPS estan LIBRES. Si los bots de
+# Telegram ya tienen un proxy escuchando ahi, este servicio no se levanta
+# (perfil `caddy`) y se configura el proxy existente apuntando a
+# 127.0.0.1:${APP_PORT} — ver deploy/README.md, seccion "Puertos ocupados".
+#
+# Variables (vienen del entorno del contenedor, definidas en deploy/.env):
+#   COUNTRIFY_DOMAIN       ej. countrify.com.ar
+#   FILES_DOMAIN           ej. archivos.countrify.com.ar (MinIO)
+#   COUNTRIFY_TLS_EMAIL    mail para los avisos de Let's Encrypt
+#   COUNTRIFY_UPSTREAM     default app:3000 (nombre del servicio en compose)
+# ---------------------------------------------------------------------------
+
+{
+	email {$COUNTRIFY_TLS_EMAIL}
+
+	# La API de admin de Caddy no hace falta y escucha en 2019.
+	admin off
+}
+
+{$COUNTRIFY_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy {$COUNTRIFY_UPSTREAM:app:3000} {
+		# ---------------------------------------------------------------
+		# CRITICO — X-Forwarded-For se PISA, no se appendea.
+		#
+		# lib/rate-limit.ts:63 hace xff.split(',')[0]: se queda con el
+		# PRIMER valor de la lista, que es justamente el que puede mandar
+		# el cliente. Si dejamos que el header entrante sobreviva (aunque
+		# sea appendeando la IP real al final), cualquiera manda
+		#   X-Forwarded-For: 1.2.3.4
+		# en cada request, cambia el valor en cada intento y evade el
+		# rate limit entero.
+		#
+		# Rompe cuatro endpoints, todos de auth:
+		#   POST /api/auth/login            10 intentos / minuto por IP
+		#   POST /api/auth/forgot-password  10 / hora por IP
+		#   POST /api/auth/reset-password   10 / minuto por IP
+		#   POST /api/auth/change-password  por IP ademas de por profile
+		#
+		# {remote_host} es la IP del peer TCP real, o sea el cliente
+		# (Caddy es el borde). Setearla explicitamente deja el
+		# comportamiento fijo sin depender de la version de Caddy ni de
+		# su configuracion de trusted_proxies.
+		#
+		# Si algun dia Countrify queda DETRAS de otro proxy (Cloudflare,
+		# el nginx de los bots), esta linea pasa a mentir: {remote_host}
+		# seria la IP del proxy y todos los usuarios compartirian el
+		# limite. En ese caso hay que configurar trusted_proxies en Caddy
+		# y tomar la IP del header que mande ese proxy — y asegurarse de
+		# que ese proxy tampoco appendee.
+		# ---------------------------------------------------------------
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		header_up X-Forwarded-Host {host}
+	}
+
+	# Los imports de padron (xlsx) y algun PDF suben por server actions, o
+	# sea por el body. 25 MB es holgado y corta subidas absurdas antes de
+	# que lleguen a Node; el limite fino lo pone Next.
+	request_body {
+		max_size 25MB
+	}
+
+	# HSTS: queda comentado a proposito. Una vez que un navegador lo ve, ese
+	# dominio queda clavado a HTTPS por max-age. Con el dominio todavia en el
+	# aire no conviene; activalo cuando el dominio sea definitivo.
+	# header {
+	# 	Strict-Transport-Security "max-age=31536000; includeSubDomains"
+	# }
+
+	log {
+		output stdout
+		format console
+	}
+}
+
+# ---------------------------------------------------------------------------
+# MinIO: los archivos subidos (comprobantes de gastos y de pago, logos de
+# negocios, imagenes de promociones y del marketplace).
+#
+# El dominio de aca tiene que ser EXACTAMENTE el mismo valor que S3_ENDPOINT en
+# .env.app y que MINIO_SERVER_URL en .env.minio. La firma de las URLs
+# prefirmadas se calcula sobre ese host: si los tres no coinciden al caracter,
+# cada PUT del navegador falla con SignatureDoesNotMatch y el mensaje no dice
+# por que. Es el error mas comun de MinIO detras de un proxy.
+#
+# `header_up Host {host}` es obligatorio: MinIO valida la firma contra el Host
+# que recibe. Si Caddy le manda el nombre interno del contenedor, no valida.
+#
+# Sin `request_body max_size` a proposito: por aca suben los comprobantes, y el
+# limite real lo pone la app al prefirmar (lib/storage/s3.ts, validateUpload).
+# ---------------------------------------------------------------------------
+{$FILES_DOMAIN} {
+	reverse_proxy minio:9000 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+	log {
+		output stdout
+		format console
+	}
+}

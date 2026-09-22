@@ -33,3 +33,14 @@ export interface EmailRecipient {
   profileId?: string | null
   fullName?: string | null
 }
+
+// Forma de un envio. Vivia en lib/aws/ses.ts, pero SES murio con la cuenta AWS
+// y el tipo no tiene nada de especifico de SES: lo usan Resend y cualquier
+// proveedor que se sume.
+export interface SendEmailInput {
+  to: string
+  subject: string
+  bodyText: string
+  bodyHtml: string
+  replyTo?: string
+}

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { pgQuery } from '@/lib/db/postgres'
-import { findProfileByEmailAnySource } from '@/lib/db/profiles'
+import { findProfileByEmail } from '@/lib/db/profiles'
 import { sendNotificationEmail } from '@/lib/email/send'
 import { renderPasswordResetEmail } from '@/lib/email/templates/password-reset'
 import { getClientIp, rateLimitResponse } from '@/lib/rate-limit'
@@ -36,16 +36,15 @@ export async function POST(request: NextRequest) {
   const emailLimited = rateLimitResponse(`auth:forgot:email:${rawEmail}`, { max: 3, windowSeconds: 3600 })
   if (emailLimited) return emailLimited
 
-  // Lookup en ambos schemas. NO devolvemos al cliente si existe o no — siempre
-  // 200 ok para no permitir enumeracion de cuentas.
-  const found = await findProfileByEmailAnySource(rawEmail)
+  // NO devolvemos al cliente si el email existe o no — siempre 200 ok para no
+  // permitir enumeracion de cuentas.
+  const profile = await findProfileByEmail(rawEmail)
 
-  if (!found) {
+  if (!profile) {
     await new Promise((r) => setTimeout(r, 350))
     return NextResponse.json({ ok: true })
   }
 
-  const { profile } = found
   const { plain, hash } = newToken()
   const expiresAt = new Date(Date.now() + RESET_EXPIRES_HOURS * 60 * 60 * 1000)
   const ip = (request.headers.get('x-forwarded-for') ?? request.headers.get('x-real-ip') ?? '').split(',')[0]?.trim() || null

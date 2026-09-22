@@ -40,6 +40,12 @@ function getPoolConfig(): PoolConfig {
     database: getRequiredEnv('DB_NAME'),
     user: getRequiredEnv('DB_USER'),
     password: getRequiredEnv('DB_PASSWORD'),
+    // Dos schemas: el propio del producto, y `shared` con businesses y
+    // promotions, que son las mismas filas para Countrify y para Citify.
+    // Casi todas las queries califican el schema a mano; esto es el cinturon
+    // para que una sin calificar resuelva bien en vez de fallar con
+    // "relation does not exist".
+    options: `-c search_path=${process.env.DB_SCHEMA ?? 'countrify'},shared,public`,
     ssl: process.env.DB_SSL === 'disable' ? false : { rejectUnauthorized: false },
     max: Number(process.env.DB_POOL_MAX ?? 10),
     idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS ?? 30_000),

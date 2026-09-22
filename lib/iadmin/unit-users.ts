@@ -5,8 +5,9 @@
 // poder compartir helpers entre múltiples server actions sin las restricciones
 // de export de Next.js.
 
+import { randomUUID } from 'node:crypto'
 import type { IAdminHolderKind, UnitProfileRelationship } from '@/lib/types'
-import { adminCreateCognitoUser, generateTempPassword } from '@/lib/aws/cognito'
+import { generateTempPassword, hashPassword } from '@/lib/auth/password'
 import { findProfileByEmail, upsertProfile } from '@/lib/db/profiles'
 import { insertIAdminAuditLogInPostgres } from '@/lib/db/iadmin-core'
 import {
@@ -66,7 +67,7 @@ export interface EnsureUnitUserResult {
 }
 
 // Crea (o reutiliza) el perfil del vecino y lo asocia a la unidad. Si el email
-// no existía, crea el usuario en Cognito con una contraseña temporal y marca
+// no existía, crea el profile con una contraseña temporal hasheada y marca
 // password_must_change para forzar el cambio en el primer login. Si ya existía,
 // sólo lo vincula a la unidad (sin tocar su contraseña).
 export async function ensureUnitUserWithCredentials(
@@ -79,15 +80,9 @@ export async function ensureUnitUserWithCredentials(
 
   const tempPassword = input.password ?? generateTempPassword()
 
-  let profileId = existing?.id
-  if (!profileId) {
-    const { sub } = await adminCreateCognitoUser({
-      email: normalizedEmail,
-      password: tempPassword,
-      fullName: input.fullName,
-    })
-    profileId = sub
-  }
+  // El id ya no lo daba Cognito (el 'sub' del pool): lo generamos nosotros.
+  // Tiene que ser un UUID de 36 chars — lib/db/postgres.ts lo valida por regex.
+  const profileId = existing?.id ?? randomUUID()
 
   await upsertProfile({
     id: profileId,
@@ -100,6 +95,7 @@ export async function ensureUnitUserWithCredentials(
     businessId: null,
     // Sólo se honra en INSERT, así que reutilizar un perfil no lo resetea.
     passwordMustChangeOnCreate: true,
+    passwordHashOnCreate: created ? await hashPassword(tempPassword) : null,
   })
 
   if (input.relationshipType === 'vecino_principal') {

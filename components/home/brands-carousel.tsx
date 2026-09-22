@@ -1,5 +1,5 @@
 import Image from 'next/image'
-import { buildPublicS3Url } from '@/lib/aws/s3'
+import { buildPublicS3Url } from '@/lib/storage/s3'
 import { getAllBusinessesFromPostgres } from '@/lib/db/businesses'
 
 export async function BrandsCarousel() {

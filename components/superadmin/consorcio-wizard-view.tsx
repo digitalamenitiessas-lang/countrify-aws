@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { ChevronDown, MapPin } from 'lucide-react'
 import { toast } from 'sonner'
@@ -8,7 +8,11 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import DynamicMap from '@/components/map/map-view-dynamic'
-import { createManagedProperty, createPlatformUser } from '@/app/superadmin/actions'
+import {
+  createManagedProperty,
+  createPlatformUser,
+  generateTemporaryPasswordAction,
+} from '@/app/superadmin/actions'
 import {
   Badge,
   ConsorcioCreatedScreen,
@@ -55,7 +59,7 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
     adminMode: (consorcioAdmins.length === 0 ? 'new' : 'existing') as 'existing' | 'new',
     newAdminFullName: '',
     newAdminEmail: '',
-    newAdminPassword: 'Countrify2026!',
+    newAdminPassword: '',
   })
   const [consorcioStepIndex, setConsorcioStepIndex] = useState(0)
   const [createdConsorcio, setCreatedConsorcio] = useState<CreatedConsorcio | null>(null)
@@ -64,6 +68,21 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
   const [consorcioLocationSearching, setConsorcioLocationSearching] = useState(false)
   const [mapRecenterKey, setMapRecenterKey] = useState(0)
   const mapCardRef = useRef<HTMLDivElement>(null)
+
+  // La contraseña inicial del admin la genera el servidor y se muestra una sola
+  // vez (en este paso y en la pantalla final del wizard). Nunca se genera en el
+  // browser ni queda una constante fija en el bundle.
+  async function refreshNewAdminPassword() {
+    try {
+      const { password } = await generateTemporaryPasswordAction()
+      setConsorcioDraft((current) => ({ ...current, newAdminPassword: password }))
+    } catch {
+      // Si falla, el campo queda vacio y se puede escribir una a mano.
+    }
+  }
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void refreshNewAdminPassword() }, [])
 
   const currentConsorcioStep = CONSORCIO_WIZARD_STEPS[consorcioStepIndex]
   const selectedConsorcioAdmin =
@@ -105,8 +124,9 @@ export function ConsorcioWizardView({ consorcioAdmins }: { consorcioAdmins: Supe
       adminMode: consorcioAdmins.length === 0 ? 'new' : 'existing',
       newAdminFullName: '',
       newAdminEmail: '',
-      newAdminPassword: 'Countrify2026!',
+      newAdminPassword: '',
     })
+    void refreshNewAdminPassword()
     setAdministrationNameTouched(false)
     setShowOptional(false)
     setConsorcioStepIndex(0)

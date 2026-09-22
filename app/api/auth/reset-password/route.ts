@@ -1,18 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { pgQuery } from '@/lib/db/postgres'
-import { adminSetCognitoPassword, isCognitoConfigured } from '@/lib/aws/cognito'
-import { clearPasswordMustChange, findProfileByEmailAnySource } from '@/lib/db/profiles'
+import { hashPassword, validatePasswordPolicy } from '@/lib/auth/password'
+import { clearPasswordMustChange, setProfilePasswordHash } from '@/lib/db/profiles'
 import { getClientIp, rateLimitResponse } from '@/lib/rate-limit'
 
 function hashToken(token: string): string {
   return crypto.createHash('sha256').update(token).digest('hex')
-}
-
-function validatePassword(pwd: string): string | null {
-  if (pwd.length < 8) return 'La contraseña debe tener al menos 8 caracteres.'
-  if (pwd.length > 72) return 'La contraseña es demasiado larga.'
-  return null
 }
 
 export async function POST(request: NextRequest) {
@@ -33,13 +27,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Token y contraseña son requeridos.' }, { status: 400 })
   }
 
-  const validationError = validatePassword(password)
+  const validationError = validatePasswordPolicy(password)
   if (validationError) {
     return NextResponse.json({ error: validationError }, { status: 400 })
-  }
-
-  if (!isCognitoConfigured()) {
-    return NextResponse.json({ error: 'Auth no configurado.' }, { status: 500 })
   }
 
   const tokenHash = hashToken(token)
@@ -62,22 +52,11 @@ export async function POST(request: NextRequest) {
     )
   }
 
-  // Reconstruimos el profile desde countrify.profiles o countrify.profiles
-  // (no podemos JOIN-ear directo porque el FK puede apuntar a cualquiera).
-  const primaryRes = await pgQuery<{ email: string }>(
-    `select email from countrify.profiles where id = $1 limit 1`,
+  const profileRes = await pgQuery<{ id: string }>(
+    `select id from countrify.profiles where id = $1 limit 1`,
     [tokenRow.profile_id],
   )
-  const businessRes = primaryRes.rows[0]
-    ? { rows: [] as Array<{ email: string }> }
-    : await pgQuery<{ email: string }>(
-        `select email from countrify.profiles where id = $1 limit 1`,
-        [tokenRow.profile_id],
-      )
-
-  const source: 'primary' | 'business' = primaryRes.rows[0] ? 'primary' : 'business'
-  const email = (primaryRes.rows[0] ?? businessRes.rows[0])?.email
-  if (!email) {
+  if (!profileRes.rows[0]) {
     return NextResponse.json(
       { error: 'No encontramos la cuenta asociada al link.' },
       { status: 400 },
@@ -85,10 +64,16 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await adminSetCognitoPassword({ email, newPassword: password, source })
+    await setProfilePasswordHash(tokenRow.profile_id, await hashPassword(password))
   } catch (error) {
-    const msg = error instanceof Error ? error.message : 'Error de auth'
-    return NextResponse.json({ error: `No pudimos actualizar la contraseña: ${msg}` }, { status: 502 })
+    console.error(
+      '[auth/reset-password] no se pudo guardar el hash:',
+      error instanceof Error ? error.message : error,
+    )
+    return NextResponse.json(
+      { error: 'No pudimos actualizar la contraseña. Probá de nuevo.' },
+      { status: 500 },
+    )
   }
 
   await pgQuery(
@@ -122,10 +107,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ valid: false })
   }
   const nameRes = await pgQuery<{ full_name: string }>(
-    `select full_name from countrify.profiles where id = $1
-     union all
-     select full_name from countrify.profiles where id = $1
-     limit 1`,
+    `select full_name from countrify.profiles where id = $1 limit 1`,
     [row.profile_id],
   )
   return NextResponse.json({ valid: true, fullName: nameRes.rows[0]?.full_name ?? null })

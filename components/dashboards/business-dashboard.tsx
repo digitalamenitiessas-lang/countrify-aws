@@ -236,6 +236,7 @@ async function uploadBusinessAsset(params: {
       recordId: params.recordId,
       fileName: params.file.name,
       contentType: params.file.type || 'application/octet-stream',
+      sizeBytes: params.file.size,
     }),
   })
 
@@ -1314,7 +1315,10 @@ export function BusinessDashboard({
       setRedemptionHistory((current) => [
         {
           id: nextResult.tokenId ?? createClientUuid(),
-          promotionId: nextResult.promotionId,
+          // El tipo del historial pide string. En este punto la promocion
+          // siempre existe (se acaba de canjear), pero el resultado la tipa
+          // nullable.
+          promotionId: nextResult.promotionId ?? '',
           promotionTitle: nextResult.promotionTitle ?? 'Promocion',
           promotionDiscount: promotions.find((promotion) => promotion.id === nextResult.promotionId)?.discount ?? null,
           profileId: '',

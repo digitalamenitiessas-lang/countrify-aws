@@ -1,16 +1,56 @@
-.git
-.gitignore
-.next
-node_modules
+# Contexto de build. Todo lo que no entre aca achica la imagen y, sobre todo,
+# evita que se cuelen secretos o variables que Next congelaria en el bundle.
+
+# --- nunca al contexto: secretos y credenciales sueltas ---
+# Ojo: esto tambien excluye .env.example, y es lo que queremos. Si un .env
+# llegara al build, Next inlinearia sus NEXT_PUBLIC_* en la imagen (ver el
+# comentario largo del Dockerfile).
 .env
 .env.*
-README.md
+*-secrets.md
+*-credentials.txt
+*-credentials.*
+credentials-aws.*
+config-.aws.*
+env.local-*.txt
+*.pem
+*.key
+citify-*.json
+citify-*.txt
+citify-*.md
+
+# --- ruido de git / editor / OS ---
+.git
+.gitignore
+.github
+.claude
+.DS_Store
+.vscode
+.idea
+
+# --- artefactos locales ---
+node_modules
+.next
+tsconfig.tsbuildinfo
 npm-debug.log*
 pnpm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-tsconfig.tsbuildinfo
-supabase/*
-!supabase/migrations/
-!supabase/migrations/**
-.claude
+docker-build*.log
+docker-push*.log
+
+# --- cosas que no hacen falta para buildear la app ---
+# deploy/ vive en el host (compose, Caddy, backups), no adentro de la imagen.
+deploy
+docs
+brand
+infra
+*.md
+!README.md
+
+# SQL fuente de 160 KB que solo usa scripts/db/build-schema.mjs en la Mac.
+# La imagen lleva db/bootstrap/, que es lo generado.
+scripts/countrify-schema.sql
+scripts/generated-rds-schema.sql
+scripts/aws
+db/migrations

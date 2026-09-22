@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createPaymentClaimUploadUrl } from '@/lib/aws/s3'
+import { createPaymentClaimUploadUrl, validateUpload } from '@/lib/storage/s3'
 import { getCurrentProfile } from '@/lib/auth'
 import { pgQuery } from '@/lib/db/postgres'
 
@@ -7,6 +7,7 @@ type UploadRequestBody = {
   unitId?: string
   fileName?: string
   contentType?: string
+  sizeBytes?: number
 }
 
 export async function POST(req: NextRequest) {
@@ -47,12 +48,25 @@ export async function POST(req: NextRequest) {
     )
   }
 
+  // Validacion server-side: extension, content-type y tamano. Antes esto vivia
+  // solo en el cliente (que ni siquiera tenia tope de tamano) y la URL
+  // prefirmada servia para subir cualquier cosa, de cualquier peso.
+  const invalid = validateUpload('payment-claim', {
+    fileName: body.fileName,
+    contentType: body.contentType,
+    sizeBytes: body.sizeBytes,
+  })
+  if (invalid) {
+    return NextResponse.json({ error: invalid.error }, { status: invalid.status })
+  }
+
   try {
     const result = await createPaymentClaimUploadUrl({
       administrationId: membership.rows[0].administration_id,
       unitId: body.unitId,
       fileName: body.fileName,
       contentType: body.contentType || 'application/octet-stream',
+      sizeBytes: body.sizeBytes,
     })
     return NextResponse.json(result)
   } catch (error) {

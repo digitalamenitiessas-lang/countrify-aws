@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useTransition } from 'react'
+import { useEffect, useState, useTransition } from 'react'
 import Link from 'next/link'
 import { ChevronDown, ChevronRight, FileSpreadsheet, Pencil, Sparkles, UploadCloud, UserCheck, UserPlus, Users, UserX } from 'lucide-react'
 import { toast } from 'sonner'
@@ -29,6 +29,9 @@ import {
   linkExistingProfileToUnit,
   updateUnit,
 } from '@/app/iadmin/consorcios/[id]/actions'
+// La password temporal se genera server-side; la action valida que quien la
+// pide sea super_admin o consorcio_admin.
+import { generateTemporaryPasswordAction } from '@/app/superadmin/actions'
 
 type Props = {
   propertyId: string
@@ -135,7 +138,7 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
     fullName: '',
     email: '',
     phone: '',
-    password: 'Countrify2026!',
+    password: '',
     isPrimaryOwner: true,
   })
   const [linkDraft, setLinkDraft] = useState({
@@ -144,6 +147,26 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
     relationshipType: 'vecino_principal' as (typeof UNIT_USER_OPTIONS)[number]['value'],
     isPrimaryOwner: false,
   })
+
+  // La contraseña temporal la genera el servidor y se muestra una sola vez, en
+  // este formulario. Nunca se genera en el browser ni queda una constante fija
+  // en el bundle.
+  async function refreshTempPassword() {
+    try {
+      const { password } = await generateTemporaryPasswordAction()
+      setUserDraft((current) => ({ ...current, password }))
+    } catch {
+      // Si falla, el campo queda vacio y se puede escribir una a mano.
+    }
+  }
+
+  // Se pide recien cuando se abre el form de alta de usuario de una unidad, no
+  // en cada carga del listado.
+  useEffect(() => {
+    if (!addingUserFor || userDraft.password) return
+    void refreshTempPassword()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addingUserFor, userDraft.password])
 
   function submitNewUnit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -258,7 +281,7 @@ export function UnitsManager({ propertyId, units, linkableProfiles, canManageUni
       fullName: '',
       email: '',
       phone: '',
-      password: 'Countrify2026!',
+      password: '',
       isPrimaryOwner: true,
     })
     setLinkDraft({ search: '', profileId: '', relationshipType: 'vecino_principal', isPrimaryOwner: false })
