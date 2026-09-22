@@ -27,6 +27,12 @@ import { randomUUID } from 'node:crypto'
 import { hash } from '@node-rs/argon2'
 import pg from 'pg'
 
+// Fuente unica de la politica, compartida con la app. No duplicar aca: cuando
+// estaba duplicada, el script quedo pidiendo 10 caracteres despues de que la
+// app bajo a 6, y rechazaba contraseñas validas con un mensaje que no
+// correspondia a ninguna regla vigente.
+import { validatePasswordPolicy } from '../../lib/auth/password-policy.mjs'
+
 // Los mismos parametros que lib/auth/password.ts. Si cambian alla, cambian aca:
 // un hash generado con otros parametros igual valida (viajan dentro del propio
 // hash), pero conviene que el seed no quede fuera de politica.
@@ -47,23 +53,12 @@ function requiredEnv(name) {
   return value
 }
 
-// Misma politica que validatePasswordPolicy en lib/auth/password.ts.
-function validatePassword(pwd) {
-  if (pwd.length < 10) return 'la contraseña debe tener al menos 10 caracteres'
-  if (pwd.length > 72) return 'la contraseña es demasiado larga'
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((re) => re.test(pwd)).length
-  if (classes < 3) {
-    return 'la contraseña tiene que combinar al menos 3 de 4 tipos: minusculas, mayusculas, numeros y simbolos'
-  }
-  return null
-}
-
 async function main() {
   const email = requiredEnv('SEED_SUPERADMIN_EMAIL').toLowerCase()
   const password = requiredEnv('SEED_SUPERADMIN_PASSWORD')
   const fullName = process.env.SEED_SUPERADMIN_NAME?.trim() || 'Super Admin'
 
-  const passwordError = validatePassword(password)
+  const passwordError = validatePasswordPolicy(password)
   if (passwordError) {
     console.error(`error: ${passwordError}`)
     process.exit(1)
