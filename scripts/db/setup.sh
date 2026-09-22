@@ -40,22 +40,37 @@ sql_literal() { printf "'%s'" "${1//\'/\'\'}"; }
 
 run() { psql -q -v ON_ERROR_STOP=1 -d "$DB" "$@"; }
 
+# Igual que run(), pero baja a countrify_admin antes de ejecutar el archivo.
+#
+# Sin esto, un bootstrap corrido como superusuario deja el schema y las 49
+# tablas owned by postgres, y countrify_admin (que es quien corre las
+# migraciones) no puede tocarlas: la primera migracion futura muere con
+# "permission denied for schema countrify", y para entonces ya hay datos.
+#
+# El SET ROLE y el -f comparten sesion, asi que todo lo que cree el archivo
+# nace con countrify_admin de dueño.
+run_as_admin() { psql -q -v ON_ERROR_STOP=1 -d "$DB" -c 'set role countrify_admin' "$@"; }
+
 echo "→ roles"
-run -v admin_pw="$(sql_literal "$ADMIN_PW")" \
+run -v db="$DB" \
+    -v admin_pw="$(sql_literal "$ADMIN_PW")" \
     -v app_pw="$(sql_literal "$APP_PW")" \
     -f "$BOOT/00_roles.sql"
 
 echo "→ schema base"
-run -f "$BOOT/01_schema.sql"
+run_as_admin -f "$BOOT/01_schema.sql"
 
 echo "→ migraciones"
 for f in "$BOOT"/migrations/*.sql; do
   echo "   $(basename "$f")"
-  run -f "$f"
+  run_as_admin -f "$f"
 done
 
+# Los grants y el `alter default privileges` tienen que correr como el DUEÑO,
+# o los privilegios por defecto se registran para el rol equivocado y las
+# tablas que cree la proxima migracion no quedan accesibles para la app.
 echo "→ grants"
-run -f "$BOOT/03_grants.sql"
+run_as_admin -f "$BOOT/03_grants.sql"
 
 echo
 echo "listo. base '$DB':"
