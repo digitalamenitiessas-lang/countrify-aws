@@ -68,7 +68,7 @@ const createPlatformUserSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(160),
   phone: z.string().trim().max(40).nullable().optional(),
-  password: z.string().min(8).max(72),
+  password: z.string().min(6).max(72),
   role: z.enum(['super_admin', 'negocio_admin', 'consorcio_admin', 'propietario', 'vecino']),
   buildingId: z.string().uuid().nullable().optional(),
   businessId: z.string().uuid().nullable().optional(),
@@ -940,7 +940,7 @@ const createBusinessWithAdminSchema = z.object({
   adminFullName: z.string().trim().min(2).max(120),
   adminEmail: z.string().trim().email().max(160),
   adminPhone: z.string().trim().max(40).nullable().optional(),
-  adminPassword: z.string().min(8).max(72),
+  adminPassword: z.string().min(6).max(72),
 })
 
 export async function createBusinessWithAdmin(input: z.input<typeof createBusinessWithAdminSchema>) {

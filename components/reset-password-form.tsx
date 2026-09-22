@@ -46,15 +46,9 @@ export function ResetPasswordForm({ token }: Props) {
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault()
     setError(null)
-    if (password.length < 10) {
-      setError('La contraseña debe tener al menos 10 caracteres y combinar al menos 3 de estos 4 tipos: minúsculas, mayúsculas, números y símbolos.')
-      return
-    }
-    // Misma politica que valida el servidor en lib/auth/password.ts:
-    // si el cliente pide menos, el usuario escribe una password valida
-    // para el form y el endpoint se la rechaza sin explicar por que.
-    if ([/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((re) => re.test(password)).length < 3) {
-      setError('La contraseña debe tener al menos 10 caracteres y combinar al menos 3 de estos 4 tipos: minúsculas, mayúsculas, números y símbolos.')
+    // Misma politica que valida el servidor en lib/auth/password.ts.
+    if (password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres.')
       return
     }
     if (password !== confirm) {
@@ -129,7 +123,7 @@ export function ResetPasswordForm({ token }: Props) {
           onChange={(e) => setPassword(e.target.value)}
           placeholder="••••••••"
           required
-          minLength={10}
+          minLength={6}
           autoComplete="new-password"
           className="bg-input/50 border-border/50"
         />
@@ -145,7 +139,7 @@ export function ResetPasswordForm({ token }: Props) {
           onChange={(e) => setConfirm(e.target.value)}
           placeholder="••••••••"
           required
-          minLength={10}
+          minLength={6}
           autoComplete="new-password"
           className="bg-input/50 border-border/50"
         />

@@ -54,7 +54,25 @@ export async function verifyDummyPassword(plain: string): Promise<void> {
 
 // Politica minima server-side. Antes la imponia el pool de Cognito; al sacarlo
 // se perdio y hay que validarla en la app.
-const PASSWORD_MIN_LENGTH = 10
+//
+// 6 caracteres, sin exigir combinacion de tipos. Es una decision explicita del
+// dueño (2026-09-22), tomada sabiendo que es floja.
+//
+// Lo que sostiene la seguridad mientras tanto:
+//   - lib/rate-limit.ts limita a 10 intentos por minuto por IP y 10 cada 15
+//     minutos por cuenta, que es la defensa real contra alguien probando
+//     contraseñas. Sin eso, 6 caracteres se rompen en minutos.
+//   - Los hashes son argon2id (19 MiB, t=2), asi que incluso con la base
+//     filtrada romperlos offline es caro.
+//
+// Sobre no exigir "3 de 4 tipos": las guias actuales (NIST SP 800-63B) la
+// desaconsejan. Empuja a la gente a "Password1!", que es predecible, y la
+// longitud aporta mucho mas que la variedad. Si se sube el minimo alguna vez,
+// subir la longitud antes que agregar reglas de composicion.
+//
+// SUBIR ESTO antes de abrir el registro al publico o de que entren consorcios
+// reales con datos de cobranza.
+const PASSWORD_MIN_LENGTH = 6
 const PASSWORD_MAX_LENGTH = 72
 
 export function validatePasswordPolicy(pwd: unknown): string | null {
@@ -63,12 +81,6 @@ export function validatePasswordPolicy(pwd: unknown): string | null {
     return `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres.`
   }
   if (pwd.length > PASSWORD_MAX_LENGTH) return 'La contraseña es demasiado larga.'
-
-  const classes = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^a-zA-Z0-9]/].filter((re) => re.test(pwd)).length
-  if (classes < 3) {
-    return 'La contraseña tiene que combinar al menos 3 de estos 4 tipos: minúsculas, mayúsculas, números y símbolos.'
-  }
-
   return null
 }
 

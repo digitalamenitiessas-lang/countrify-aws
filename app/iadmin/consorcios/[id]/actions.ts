@@ -435,7 +435,7 @@ const createUnitUserSchema = z.object({
   fullName: z.string().trim().min(2).max(120),
   email: z.string().trim().email().max(160),
   phone: z.string().trim().max(40).nullable().optional(),
-  password: z.string().min(8).max(72),
+  password: z.string().min(6).max(72),
   isPrimaryOwner: z.boolean().optional().default(false),
 })
 
