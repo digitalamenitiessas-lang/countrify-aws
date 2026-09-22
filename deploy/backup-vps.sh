@@ -79,7 +79,11 @@ log "=== backup $TS ==="
 # Formato custom (-Fc): comprimido y permite restaurar tablas sueltas.
 DUMP="$DEST/db.dump"
 log "base de datos..."
-sudo -u postgres pg_dump -Fc -d "$PG_DB" -f "$DUMP" || die "pg_dump fallo"
+# La redireccion la hace la shell de root, asi que el archivo nace de root y
+# pg_dump solo escribe en el descriptor heredado. Con `-f "$DUMP"` seria el
+# usuario postgres quien intenta crearlo, y no puede: el directorio es 0700
+# root a proposito, porque adentro van los comprobantes del consorcio.
+sudo -u postgres pg_dump -Fc -d "$PG_DB" > "$DUMP" || die "pg_dump fallo"
 
 SIZE=$(stat -c%s "$DUMP")
 (( SIZE >= MIN_DUMP_BYTES )) || die "el dump pesa $SIZE bytes, menos del minimo ($MIN_DUMP_BYTES): quedo cortado"
